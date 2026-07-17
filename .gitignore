@@ -1,0 +1,20 @@
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
+# Secrets never get committed (senior repo rubric: "no committed secrets").
+.env
+.env.*
+!.env.example
+
+# Internal strategy material. This repo becomes the public portfolio artifact
+# and git history is permanent, so none of this ever enters it. The engineering
+# record that IS meant to be public lives in docs/ (threat model, ADRs,
+# learning log) and the README.
+*.pdf
+flagship-design-plan.md
+TODOS.md
+reviews/
+
+.DS_Store

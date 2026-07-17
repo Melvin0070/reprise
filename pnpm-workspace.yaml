@@ -1,0 +1,10 @@
+# Workspace layout follows the module paths the plan already names
+# (flagship-design-plan.md — "Files:" lines on each T-task).
+# Packages are created only as the walking skeleton needs them; these globs
+# match nothing until then, which is intentional.
+packages:
+  - "api"
+  - "worker"
+  - "shared/*"
+  - "web"
+  - "hocuspocus"
