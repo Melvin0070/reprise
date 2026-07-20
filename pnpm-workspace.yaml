@@ -8,3 +8,10 @@ packages:
   - "shared/*"
   - "web"
   - "hocuspocus"
+
+# Single source of truth for shared dependency versions. Packages reference
+# these with "catalog:" so a version is pinned once, not per-package.
+catalog:
+  "@types/node": 26.1.1
+  typescript: 7.0.2
+  vitest: 4.1.10

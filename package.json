@@ -7,7 +7,8 @@
     "verify": "pnpm ultracite check && pnpm -r typecheck && pnpm -r test",
     "ultracite": "ultracite",
     "check": "ultracite check",
-    "fix": "ultracite fix"
+    "fix": "ultracite fix",
+    "test:linux": "docker build -q -f infra/dev/linux-test.Dockerfile -t reprise-linux-test . && docker run --rm reprise-linux-test"
   },
   "devDependencies": {
     "@types/node": "26.1.1",

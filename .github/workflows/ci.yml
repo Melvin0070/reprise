@@ -35,3 +35,19 @@ jobs:
 
       - name: test
         run: pnpm -r test
+
+  # The isolation suite cannot ride the job above: it needs Linux (macOS does
+  # not enforce RLIMIT_AS) and root (the jail drops to an unprivileged uid, and
+  # you cannot drop a privilege you do not hold — the `runner` user gets EPERM).
+  # Building the same image used by `pnpm test:linux` keeps the local loop and
+  # CI byte-identical rather than merely similar (OV-8).
+  isolation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: build the Linux test image
+        run: docker build -q -f infra/dev/linux-test.Dockerfile -t reprise-linux-test .
+
+      - name: isolation suite
+        run: docker run --rm reprise-linux-test
