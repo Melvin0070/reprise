@@ -30,6 +30,7 @@ WORKDIR /repo
 # Dependency layer first so source edits don't reinstall on every run.
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY worker/package.json worker/
+COPY shared/submission-state/package.json shared/submission-state/
 RUN pnpm install --frozen-lockfile
 
 COPY . .
