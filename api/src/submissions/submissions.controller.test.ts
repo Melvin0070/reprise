@@ -7,6 +7,8 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { APP_OPTIONS, configureApp } from "../app-setup.js";
 import { AppModule } from "../app.module.js";
+import { API_KEY } from "../auth/api-key.guard.js";
+import { MIN_API_KEY_LENGTH } from "../auth/api-key.js";
 import { SUBMISSION_RUNNER } from "./submission-runner.js";
 import type { SubmissionRunner } from "./submission-runner.js";
 import { MAX_BODY_BYTES, MAX_CODE_BYTES } from "./submission.schema.js";
@@ -20,6 +22,13 @@ import { MAX_BODY_BYTES, MAX_CODE_BYTES } from "./submission.schema.js";
  * (`run-submission.linux.test.ts`); this suite owns the layer above it, and
  * `submissions.linux.test.ts` joins the two end to end.
  */
+/**
+ * The gate is global (OV-1), so every request here must carry a key. Auth
+ * itself is tested in `auth/api-key.guard.test.ts`; these tests authenticate
+ * and then assert on the layer behind it.
+ */
+const TEST_KEY = `test-key-${"x".repeat(MIN_API_KEY_LENGTH)}`;
+
 const succeeded: SubmissionResult = {
   durationMs: 41,
   exitCode: 0,
@@ -58,6 +67,8 @@ const buildApp = async (
   const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
     .overrideProvider(SUBMISSION_RUNNER)
     .useValue(runner)
+    .overrideProvider(API_KEY)
+    .useValue(TEST_KEY)
     .compile();
 
   const built =
@@ -73,7 +84,10 @@ const post = async (
   runner: SubmissionRunner = stubRunner()
 ) => {
   const built = await buildApp(runner);
-  return request(built.getHttpServer()).post("/submissions").send(body);
+  return request(built.getHttpServer())
+    .post("/submissions")
+    .set("Authorization", `Bearer ${TEST_KEY}`)
+    .send(body);
 };
 
 afterEach(async () => {
@@ -287,7 +301,9 @@ describe("the DX7 envelope covers every error, not just handled ones", () => {
     // caller hits by typo looks like every other error rather than like a
     // different API.
     const built = await buildApp(stubRunner());
-    const response = await request(built.getHttpServer()).get("/nope");
+    const response = await request(built.getHttpServer())
+      .get("/nope")
+      .set("Authorization", `Bearer ${TEST_KEY}`);
 
     expect(response.status).toBe(404);
     expect(response.body.code).toBe("not_found");
@@ -315,6 +331,7 @@ describe("the DX7 envelope covers every error, not just handled ones", () => {
     const built = await buildApp(stubRunner());
     const response = await request(built.getHttpServer())
       .post("/submissions")
+      .set("Authorization", `Bearer ${TEST_KEY}`)
       .set("Content-Type", "application/json")
       .send("{not json");
 

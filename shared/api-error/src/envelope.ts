@@ -25,13 +25,21 @@
  * "your request did something". So the rule is total — a code in this list
  * means the run never happened.
  *
- * DX7 also names `unauthorized`, `budget_exceeded` and `quota_exhausted`. They
- * are deliberately absent: their semantics only become real with the OV-1 key
- * gate and step-2 budgets, and a code defined ahead of the thing it describes
- * is a guess that consumers would then switch on. This differs from 7A's
- * `canceled` — that state had settled semantics and only lacked a trigger.
+ * DX7 also names `budget_exceeded` and `quota_exhausted`. They are deliberately
+ * absent: their semantics only become real with step-2 budgets, and a code
+ * defined ahead of the thing it describes is a guess that consumers would then
+ * switch on. This differs from 7A's `canceled` — that state had settled
+ * semantics and only lacked a trigger.
  */
 export const ERROR_CODES = [
+  /**
+   * The request carried no usable credential (OV-1).
+   *
+   * Deliberately one code for "no key" and "wrong key". The hint distinguishes
+   * them because the caller already knows which they sent, but the code does
+   * not, so nothing about key validity is discoverable by an enum switch.
+   */
+  "unauthorized",
   /** The request body did not describe a runnable submission. */
   "validation_failed",
   /** No such route or resource. */

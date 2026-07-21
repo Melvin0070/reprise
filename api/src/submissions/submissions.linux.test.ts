@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { APP_OPTIONS, configureApp } from "../app-setup.js";
 import { AppModule } from "../app.module.js";
+import { MIN_API_KEY_LENGTH } from "../auth/api-key.js";
 
 /**
  * The walking skeleton, end to end, with nothing stubbed.
@@ -27,6 +28,13 @@ const canIsolate = process.platform === "linux" && process.getuid?.() === 0;
 const RUNNER_UID = "1001";
 
 /**
+ * A real key, set in the environment rather than injected, so this suite
+ * exercises the same startup path a deploy does: the gate reads its key from
+ * the process environment and the request has to carry it.
+ */
+const TEST_KEY = `linux-test-key-${"x".repeat(MIN_API_KEY_LENGTH)}`;
+
+/**
  * Read from the jail's own limits rather than restated, so raising the wall
  * clock cannot leave this test failing for a reason that has nothing to do
  * with the behaviour it checks.
@@ -41,6 +49,7 @@ const buildApp = async (): Promise<NestExpressApplication> => {
   // once, when its provider is constructed.
   process.env.REPRISE_RUN_UID = RUNNER_UID;
   process.env.REPRISE_RUN_GID = RUNNER_UID;
+  process.env.REPRISE_API_KEY = TEST_KEY;
 
   const moduleRef = await Test.createTestingModule({
     imports: [AppModule],
@@ -56,7 +65,10 @@ const buildApp = async (): Promise<NestExpressApplication> => {
 
 const post = async (body: object | string) => {
   const built = await buildApp();
-  return request(built.getHttpServer()).post("/submissions").send(body);
+  return request(built.getHttpServer())
+    .post("/submissions")
+    .set("Authorization", `Bearer ${TEST_KEY}`)
+    .send(body);
 };
 
 afterEach(async () => {

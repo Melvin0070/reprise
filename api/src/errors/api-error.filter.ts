@@ -20,6 +20,7 @@ import { ApiError } from "./api-error.js";
  */
 
 const HTTP_BAD_REQUEST = 400;
+const HTTP_UNAUTHORIZED = 401;
 const HTTP_NOT_FOUND = 404;
 const HTTP_PAYLOAD_TOO_LARGE = 413;
 const HTTP_INTERNAL_ERROR = 500;
@@ -101,6 +102,34 @@ const forStatus = (status: number, request: Request): ErrorEnvelope => {
   );
 };
 
+/**
+ * The challenge accompanying every 401.
+ *
+ * RFC 9110 §15.5.2 makes this a MUST, not a nicety: a 401 without it says
+ * "you need credentials" while withholding which kind, leaving a client to
+ * discover the scheme by reading prose. No `realm` — it is optional for Bearer
+ * and would only publish an instance name.
+ */
+const BEARER_CHALLENGE = "Bearer";
+
+/**
+ * Send an envelope, adding whatever headers the status itself obliges.
+ *
+ * Centralised here rather than raised at the throw site, so the obligation is
+ * met by the status code alone. The guard cannot forget it, and neither can
+ * the next thing that rejects unauthenticated.
+ */
+const send = (
+  response: Response,
+  status: number,
+  body: ErrorEnvelope
+): void => {
+  if (status === HTTP_UNAUTHORIZED) {
+    response.setHeader("WWW-Authenticate", BEARER_CHALLENGE);
+  }
+  response.status(status).json(body);
+};
+
 @Catch()
 export class ApiErrorFilter implements ExceptionFilter {
   catch(exception: unknown, host: ArgumentsHost): void {
@@ -108,7 +137,7 @@ export class ApiErrorFilter implements ExceptionFilter {
     const response = http.getResponse<Response>();
 
     if (exception instanceof ApiError) {
-      response.status(exception.status).json(exception.envelope);
+      send(response, exception.status, exception.envelope);
       return;
     }
 
@@ -118,6 +147,6 @@ export class ApiErrorFilter implements ExceptionFilter {
     const body = forStatus(status, http.getRequest<Request>());
     const reported = body.code === "infra_error" ? HTTP_INTERNAL_ERROR : status;
 
-    response.status(reported).json(body);
+    send(response, reported, body);
   }
 }
