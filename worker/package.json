@@ -3,6 +3,12 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "exports": {
+    "./limits": "./src/sandbox/limits.ts",
+    "./run": "./src/run/run-submission.ts",
+    "./language": "./src/run/language.ts",
+    "./runner-config": "./src/run/runner-config.ts"
+  },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run"

@@ -101,6 +101,33 @@ This second trigger is the more important one, and it is worth being blunt about
 the performance argument for a queue is negotiable at v0.1 scale, and the security
 argument is not.
 
+## What the upgrade changes on the wire (found while building #3, 2026-07-21)
+
+The "swap, not a wall" guardrail held for the *code* — `runSubmission()` is reached
+through a `SUBMISSION_RUNNER` provider, and the queue replaces that provider without the
+controller changing. It does **not** hold for the HTTP contract, and that is worth
+recording because the guardrail did not predict it.
+
+Inline execution means `POST /submissions` returns **200 with a terminal state**: the
+response *is* the finished run. A queued implementation cannot do that. It must return
+**202 with `queued`** and let the client stream or poll for the result. So the upgrade is
+source-compatible and wire-**incompatible** — every existing client breaks on the day the
+queue lands.
+
+Two consequences we accept knowingly:
+
+- **The status code is part of the downgrade's cost**, not a detail. It belongs in the
+  Tradeoff answer below alongside admission control and durability.
+- **This is cheap now and expensive later.** Today the only client is our own test suite.
+  It stops being cheap the moment anything else calls this endpoint — which is exactly
+  what T11's sequencing constraint already implies, and one more reason the worker split
+  is scheduled rather than hoped for.
+
+What this does *not* change: the decision to return terminal states as data at 200 rather
+than as HTTP errors (V7). `timeout` is a run result under both designs. Only the
+*question the response answers* changes — "here is your run" becomes "here is your
+ticket."
+
 ## Baseline
 
 _Not yet measured — the inline version has not shipped. No numbers here until k6 has
@@ -142,7 +169,9 @@ to start?* If yes, load turns correctness into a coin flip.
   buys nothing measurable. The seam was factored first so the upgrade is a swap.
 - **Tradeoff:** we gave up admission control, durability across restarts, and any
   visible `queued` state. The specific cost is that `wallClockMs` starts at spawn, so
-  contention is charged to the run's own deadline.
+  contention is charged to the run's own deadline. We also accepted a wire-breaking
+  upgrade: inline answers 200 with a terminal state, a queue must answer 202 with
+  `queued`, so the swap that is source-compatible is not client-compatible.
 - **Scale & Failure:** it breaks at concurrency where CPU contention pushes a solo-300ms
   payload past its 10s wall clock — turning other tenants' load into a false `timeout`
   on a correct program. It also ends unconditionally at the first DB credential, because
