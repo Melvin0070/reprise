@@ -1,0 +1,7 @@
+{
+  // Emit config, separate from tsconfig.json so the editor and `typecheck`
+  // keep seeing the tests while the production build never emits them.
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "composite": true },
+  "exclude": ["**/*.test.ts"]
+}

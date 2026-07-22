@@ -1,0 +1,13 @@
+{
+  // Solution file: it owns no source of its own (`files: []`), it only names
+  // the projects so `tsc -b` builds the whole workspace in dependency order.
+  // `pnpm build` at the root runs this; the per-package `build` scripts exist
+  // for building one package in isolation.
+  "files": [],
+  "references": [
+    { "path": "./shared/submission-state/tsconfig.build.json" },
+    { "path": "./shared/api-error/tsconfig.build.json" },
+    { "path": "./worker/tsconfig.build.json" },
+    { "path": "./api/tsconfig.build.json" }
+  ]
+}

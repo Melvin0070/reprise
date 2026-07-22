@@ -7,6 +7,15 @@
     "moduleResolution": "nodenext",
     "types": ["node"],
 
+    // Workspace packages expose their `.ts` source under a `development` export
+    // condition and their built `.js` under `default` (see each package.json).
+    // Naming the condition here is what makes `tsc` and the editor resolve a
+    // cross-package import to source in the dev loop, so there is no build step
+    // between editing a shared file and typechecking against it. Production runs
+    // `node dist/…`, which sets no `development` condition and so gets the built
+    // output. Vitest activates `development` on its own, needing no config.
+    "customConditions": ["development"],
+
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true,

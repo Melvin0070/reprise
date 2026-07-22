@@ -4,9 +4,13 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/state.ts"
+    ".": {
+      "development": "./src/state.ts",
+      "default": "./dist/state.js"
+    }
   },
   "scripts": {
+    "build": "tsc -b tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },

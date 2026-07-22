@@ -4,9 +4,13 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/envelope.ts"
+    ".": {
+      "development": "./src/envelope.ts",
+      "default": "./dist/envelope.js"
+    }
   },
   "scripts": {
+    "build": "tsc -b tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },

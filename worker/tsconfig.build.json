@@ -1,0 +1,10 @@
+{
+  // Emit config, separate from tsconfig.json so the editor and `typecheck`
+  // keep seeing the tests while the production build never emits them.
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "composite": true },
+  "exclude": ["**/*.test.ts"],
+  // A `tsc -b` reference for every workspace package this one imports, so the
+  // graph builds in dependency order and stops if a dependency does not.
+  "references": [{ "path": "../shared/submission-state/tsconfig.build.json" }]
+}

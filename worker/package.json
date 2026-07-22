@@ -4,12 +4,25 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./limits": "./src/sandbox/limits.ts",
-    "./run": "./src/run/run-submission.ts",
-    "./language": "./src/run/language.ts",
-    "./runner-config": "./src/run/runner-config.ts"
+    "./limits": {
+      "development": "./src/sandbox/limits.ts",
+      "default": "./dist/sandbox/limits.js"
+    },
+    "./run": {
+      "development": "./src/run/run-submission.ts",
+      "default": "./dist/run/run-submission.js"
+    },
+    "./language": {
+      "development": "./src/run/language.ts",
+      "default": "./dist/run/language.js"
+    },
+    "./runner-config": {
+      "development": "./src/run/runner-config.ts",
+      "default": "./dist/run/runner-config.js"
+    }
   },
   "scripts": {
+    "build": "tsc -b tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
