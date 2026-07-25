@@ -51,3 +51,17 @@ jobs:
 
       - name: isolation suite
         run: docker run --rm reprise-linux-test
+
+  # The production image, proven end to end against the artifact that deploys:
+  # it boots, enforces the OV-1 gate, and runs the walking skeleton in the jail
+  # inside the container. A superset of api/src/main.smoke.test.ts (which needs
+  # a build the verify job does not do) — so that test stays a fast local check
+  # and this is its authoritative CI proof. Cannot ride the verify job: it needs
+  # Docker and Linux, like the isolation suite above.
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: production image serves the walking skeleton
+        run: bash infra/smoke-image.sh
