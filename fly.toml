@@ -1,22 +1,27 @@
 # Fly.io deploy config for the Reprise API (issue #4).
 #
-# The locked target: Fly Machines are Firecracker microVMs with their own
-# kernel, which is what the custom sandbox needs and what every managed PaaS
-# denies (see docs/notebook.md, 2026-07-25). The image built here is
-# infra/Dockerfile — the same artifact infra/smoke-image.sh proves end to end.
+# The locked target: Fly Machines are Firecracker microVMs with their own kernel,
+# which is what the custom sandbox needs and what every managed PaaS denies (see
+# docs/notebook.md, 2026-07-25). Fly Sprites was evaluated on 2026-09-08 and is
+# NOT a substitute — it slides a Fly-managed container between user code and the
+# kernel, which is exactly the delegation question a Machine answers by
+# construction. The image built here is infra/Dockerfile, the same artifact
+# infra/smoke-image.sh proves end to end in CI.
+#
+# DO NOT re-run `fly launch` against this file. It rewrites the config and
+# strips every comment below, replacing them with a generated header — which is
+# what happened on 2026-09-08 (semantics survived intact; the rationale did not).
+# Formatting here matches what fly emits, so `fly deploy` leaves it alone.
 
-# Globally unique on Fly. If `fly launch` reports this taken, pick another and
-# update this line — the URL is derived from it, so choose deliberately once.
-app = "reprise-api"
-primary_region = "sin"
+app = 'reprise-api'
+primary_region = 'sin'
 
 [build]
-dockerfile = "infra/Dockerfile"
+dockerfile = 'infra/Dockerfile'
 
-# REPRISE_API_KEY is NOT here. Secrets never enter the repo; set it once with
-#   fly secrets set REPRISE_API_KEY=$(openssl rand -hex 32)
-# and the server reads it at boot (OV-1). REPRISE_RUN_UID/GID are baked into the
-# image, so they need no restating here.
+# REPRISE_API_KEY is deliberately absent. Secrets never enter the repo; it is set
+# once with `fly secrets set REPRISE_API_KEY=...` and read at boot (OV-1).
+# REPRISE_RUN_UID/GID are baked into the image, so they need no restating here.
 
 [http_service]
 internal_port = 3000
@@ -24,28 +29,35 @@ force_https = true
 
 # Scale-to-zero: the machine sleeps when idle and Fly Proxy wakes it on the
 # next request (~2s cold start, invisible in a demo). A stopped machine bills
-# storage only. min_machines_running = 0 is the floor that makes idle ~$0.
-auto_stop_machines = "stop"
+# storage only, so min_machines_running = 0 is the floor that makes idle ~$0.
+#
+# Wake-on-enqueue (E16) is NOT covered by this. Fly Proxy only sees HTTP, so
+# once Redis/BullMQ lands, a deep-linked or API-triggered run would sit queued
+# forever on a stopped worker. That is T55's job, not this file's.
+auto_stop_machines = 'stop'
 auto_start_machines = true
 min_machines_running = 0
 
-# Concurrency ceiling as a backpressure and billing control, not tuning: each
-# inline run spawns a memory-capped python child, so a flood of concurrent
-# requests is bounded here rather than left to OOM the machine. Observing that
-# the inline path blocks under load is the point of the budgeted downgrade
+# A backpressure and billing control, not tuning. Each inline run spawns a
+# memory-capped python child, so a flood of concurrent requests is bounded
+# here rather than left to OOM the machine. That the inline path blocks under
+# load is the finding the pre-registered experiment exists to measure
 # (docs/learning-log/001-inline-execution.md); this only stops it crashing.
 [http_service.concurrency]
-type = "requests"
+type = 'requests'
 hard_limit = 25
 soft_limit = 20
 
 # One small machine. 512MB gives the Node parent headroom above the jailed
-# child's RLIMIT_AS. Worst-case cost is bounded by machine count × size × 730h
-# because Fly never auto-provisions past what is declared (docs/notebook.md).
+# child's RLIMIT_AS (256MB). Worst-case cost is bounded by machine count x size
+# x 730h, because Fly Proxy never auto-provisions past what is declared here —
+# there is no hard spend cap on Fly, so this declaration IS the cap
+# (docs/notebook.md, 2026-07-25).
 [[vm]]
-size = "shared-cpu-1x"
-memory = "512mb"
+size = 'shared-cpu-1x'
+memory = '512mb'
 
-# No health check yet: every route answers 401/404 without a key, so an HTTP
-# check has no 2xx to hit. A public /healthz with a real check is DX8, deferred
-# with the rest of the startup-preflight work.
+# No health check yet, deliberately: every route answers 401/404 without a key,
+# so an HTTP check has no 2xx to hit and would flap the machine. A public
+# /healthz with a real capability probe is DX8, deferred with the rest of the
+# startup-preflight work.
