@@ -353,3 +353,43 @@ asserting every `ErrorCode` has an anchor so the drift cannot recur silently.
 nobody ever sees — Fly secrets are write-only and `fly secrets list` returns a digest. The
 value is unrecoverable, so generate into a shell variable first and keep it, or plan on a
 rotation and a machine restart.
+
+---
+
+## 2026-09-08 — S1.5: the jail gets fixed before more surface is built on it
+
+**The decision.** Melvin's call, on being shown the audit findings: pull #78 forward, fix the
+jail before building further. #78 and #79 move into a new `S1.5 sandbox correctness`
+milestone, which sorts ahead of `S2 auth + budgets`.
+
+**Why it needed a milestone rather than a label.** The loop's intake is "lowest-numbered
+unblocked issue in the current milestone". Both mechanisms were working against pulling
+these forward: they sat in S3, and even inside S2 they would have sorted last, because #78
+and #79 are the highest issue numbers in the repo. A priority label would not have moved
+them — the rule reads issue numbers, not priorities.
+
+So the fix is a milestone whose title sorts first. `S1.5` before `S2` is a string
+comparison the session hook already does. Zero code change; the ordering mechanism is the
+milestone list, and it turns out to be the right lever precisely because it is the one the
+loop actually reads.
+
+**The judgement, recorded because it was genuinely arguable.** Exposure for #78 requires
+the OV-1 key, which only Melvin holds, so leaving it until S3 was defensible and I said so.
+The counter-argument that won: S2 builds OAuth, sessions and per-account budgets directly on
+top of the execution path, so every surface added before the fix inherits a jail that can
+hang a request forever and a documented boundary that was wrong. Fixing a load-bearing
+mechanism is cheaper before things depend on it, and "the key holder is trustworthy" stops
+being the answer the moment OV-6 guest-run exists.
+
+**#79 was re-scoped rather than moved wholesale.** Its urgent half — the threat model
+claiming containment it does not have — already landed in #80. What remains is a fork:
+either an isolated Fly network (the real fix, but it means destroying and recreating the
+app, which is Melvin's infrastructure and so halts the loop), or a standing constraint that
+nothing else is provisioned in this org while the tier is crude. The second is autonomous
+and strictly weaker; it is what gets built absent a decision.
+
+**What would prove this ordering wrong:** if #78's fix turns out to need machinery that
+only exists after S2 — it does not, the reap-by-uid approach uses the dedicated run uid that
+already exists — or if S1.5 stretches long enough that the collaborative half's risk
+concentrates at the end again, which is the exact failure OV-4 exists to prevent. Two
+issues is not that.
