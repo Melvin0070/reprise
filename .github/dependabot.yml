@@ -1,0 +1,37 @@
+# Dependency updates.
+#
+# Two ecosystems, because the repo has two supply chains with different risk
+# profiles. GitHub Actions is the sharper one: a compromised action runs inside
+# CI with whatever token scope the workflow grants, so those pins are checked
+# weekly and grouped into a single PR — a stale action is a live risk, not a
+# version-number chore.
+#
+# npm updates land grouped as well. The autonomous loop merges on green CI, and
+# fifty single-dependency PRs would drown the backlog the build actually runs
+# on. Major bumps stay ungrouped so they arrive alone and get read.
+version: 2
+
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore(ci)"
+
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    # The workspace resolves through the root lockfile, so one entry covers
+    # api/, worker/ and shared/* rather than needing a directory per package.
+    versioning-strategy: increase
+    groups:
+      minor-and-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+    commit-message:
+      prefix: "chore(deps)"
