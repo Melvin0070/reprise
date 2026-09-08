@@ -139,8 +139,20 @@ reaches rather than betting it can't happen:
   any other caller. The blast radius is at most one worker's local state, never the data
   layer. This is a one-way-door decision and is never downgraded.
 - **Deployment shapes the rest**, and the honest answer differs by target:
-  - **Fly.io Machines:** each worker is a hardware-virtualized microVM. Even a full
-    container escape is contained *inside that microVM*. Blast radius ≈ one microVM.
+  - **Fly.io Machines:** each worker is a hardware-virtualized microVM, so even a full
+    container escape is contained *inside that microVM* — **but the microVM is not the
+    blast radius.** Fly puts every app in an organization on a shared private IPv6
+    network (6PN). A jailed process resolves `_apps.internal` against Fly's resolver at
+    `[fdaa::3]:53` and opens TCP to any `fdaa::/16` peer it gets back. That needs no
+    escape at all: attack #5, which this document already lists as *not stopped*, is
+    sufficient. **Blast radius ≈ every Machine in the Fly organization.**
+
+    Today that org holds one app, so the practical radius is one machine. The danger is
+    forward-looking: this silently weakens OV-10. Credential-poor workers defend against
+    stolen credentials, not against network reachability — the day a Fly Postgres or Redis
+    is provisioned in this org it is reachable from inside the sandbox with no code change
+    and no new finding. Either the app moves to an isolated Fly network, or nothing else
+    gets provisioned in this org while the tier is crude. Tracked in issue #79.
   - **Single-host privileged compose (self-host):** workers share the host kernel. An
     escape reaches the host. Blast radius ≈ the host.
 
@@ -152,7 +164,12 @@ reaches rather than betting it can't happen:
 
 The **crude / DEGRADED** tier is what ships first (built in issue #2). As of that slice:
 
-- Attacks 1–3 are contained and covered by the isolation suite (Linux runner only).
+- Attacks 1–3 are contained and covered by the isolation suite (Linux runner only) —
+  **with one verified exception.** The reap for #1 and #3 is `kill(-pgid)`, and a child
+  that calls `setsid(2)` leaves the process group, so the kill misses it and the run's
+  promise never settles. Reproduced 2026-09-08; tracked in issue #78. Until that lands,
+  attacks 1 and 3 are contained against processes that stay in their group and not
+  against ones that do not.
 - Attack 4 is reduced, not contained; attacks 5–6 are not stopped.
 - Execution is OV-1 key-gated and the tier is labeled unsafe-for-strangers.
 - The step-3 hardening (rows marked "full") lands in place, each layer its own commit, and
