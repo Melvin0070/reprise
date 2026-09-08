@@ -127,3 +127,53 @@ or identity, which cannot be done on his behalf:
 permission layer this session: the `main` ruleset (require PR + the three CI checks) and enabling
 auto-merge. Both are mechanical and both matter more now than they did under human review, because
 the ruleset is what stops a red CI reaching `main` when nobody is watching.
+
+---
+
+## 2026-09-08 — Fly Sprites evaluated; Fly Machines stays
+
+**The question.** Fly launched **Sprites** (announced Jan 2026) — instant-create Linux VMs
+with root, a 100GB object-storage-backed root filesystem, auto-sleep, no time limit, aimed
+squarely at running coding agents. Since Reprise's backend half *is* a sandbox for untrusted
+code, this needed a real answer rather than an assumption.
+
+**Sources.** `fly.io/blog/design-and-implementation/` (Thomas Ptacek, 13 min, last updated
+2026-01-14), plus the Sprites blog and docs index at `docs.sprites.dev`.
+
+**What Sprites actually are.** Fly Machines with three decisions reversed: no user container
+(every Sprite boots from one standard image, so pools of empty Sprites stand by and create is
+~1-2s); disks rooted in S3-compatible object storage with NVMe as a read-through cache, via a
+hacked JuiceFS with a SQLite metadata backend kept durable by Litestream; and *inside-out
+orchestration*, where the orchestration services run in the VM's root namespace.
+
+**Why this does not replace Fly Machines for us — the load-bearing sentence.** From the post:
+"user code running on a Sprite isn't running in the root namespace. We've slid a container
+between you and the kernel."
+
+That is precisely the thing the locked hosting decision exists to avoid. Step-3 hardening needs
+namespaces + cgroups v2 + seccomp applied *by us*, which requires either real root in the root
+namespace or verified user-namespace and cgroup delegation into the inner container. A Fly
+Machine is a Firecracker microVM with its own kernel and root in the root namespace — no
+question to answer. A Sprite puts a Fly-managed container in between, which turns "can we
+build the sandbox here" back into an unverified premise of exactly the kind DX4/V5 forced us
+to spike before trusting.
+
+**Decision: no change.** `fly.toml` and the Machines target stand. Sprites is not a downgrade
+we rejected on taste; it is a different product optimized for interactive agent workloads with
+aggressive sleep, and its central design choice is antagonistic to ours.
+
+**What would prove this wrong:** documented evidence that a Sprite's inner container gets
+cgroups-v2 delegation and unprivileged user namespaces (an `unshare -Ur` that succeeds, a
+writable `/sys/fs/cgroup` subtree). If that turns out to be true, Sprites' 1-2s create and
+scale-to-near-zero would be a genuinely better fit than a Machine with `auto_stop`, and this
+entry should be reopened. Not worth spending the spike now: the Machines path is already
+proven by `infra/smoke-image.sh` and needs no new premise.
+
+**Unrelated, and worth reading anyway.** The post is a good senior engineer explaining sandbox
+tradeoffs — containers vs. microVMs, object-storage-rooted disks, why attached storage anchors
+workloads to physicals. Useful Defense ammunition on the Scale & Failure rung.
+
+**Also noted, without alarm.** Sprites, E2B and Modal all being in this space is the premise
+the plan already stated ("the same core product Judge0, Piston, E2B, and Modal sandboxes are
+built on"). A well-marketed product in the same space makes the domain more legible to a
+reader, not less — the signal was never that nobody else built one.

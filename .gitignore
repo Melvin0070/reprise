@@ -17,4 +17,9 @@ flagship-design-plan.md
 TODOS.md
 reviews/
 
+# Per-machine Claude Code config: grants Bash permissions for the autonomous
+# loop, so it is a local trust decision rather than a shared repo setting.
+# .claude/agents/ IS committed — the review gate is part of the artifact.
+.claude/settings.local.json
+
 .DS_Store
