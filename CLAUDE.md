@@ -78,6 +78,47 @@ Run it with `/review-gate`, which carries the lens-selection table and the adver
 verification step. Prose in this file is what the gate IS; the command is how it gets run
 the same way twice.
 
+### Agents build too, not only review
+
+The six reviewers above are the mandatory half. Delegating *construction* is a judgement
+call, and the default is wrong in both directions if left unstated.
+
+**Delegate a builder agent when the work is independent of what this session already holds
+AND large enough that a fresh context load pays for itself.** Concretely: a whole frontend
+surface against its approved mockup, a research question (read Piston/Judge0/Yjs source and
+report), a test suite derived from a `Verify:` line, a benchmark harness. Give it the plan
+section and the mockup path, not your conclusions.
+
+**Keep it in-session when** the slice is small, sequential, or touches files another slice is
+touching. Evidence from 2026-09-08: five consecutive slices that session each touched some
+of `CLAUDE.md`, `docs/notebook.md` and `.github/`, and produced three rebase conflicts with
+only *one* worker. Parallel builders on overlapping files would have been strictly worse than
+sequential, and a subagent spun up to edit two files costs more context than it saves.
+
+**Run two builders at once only in separate worktrees** (`isolation: "worktree"`), and only
+where the plan says the lanes are independent. In v1.0 that is exactly one place: **S3 sandbox
+hardening ∥ S3.5 thin CRDT slice**. The plan also flags where it does NOT work — S6 and S7
+both touch `web/output/`, so no amount of parallelism helps.
+
+**Never delegate:** anything labelled `one-way-door`, and the four load-bearing seams. A
+reviewer checking an agent's *guess* at a contract is a gate reviewing the wrong artifact.
+
+The biggest genuine fan-out in the plan is **S7 — thirteen surfaces against six approved
+mockups.** The spec there is visual and unambiguous, which is exactly the shape a builder
+agent handles well. Expect to use them heavily there and sparingly before it.
+
+### Report session health at the end of every slice
+
+`.claude/hooks/session-health.sh` prints a mechanical handoff banner from transcript size,
+but it cannot see how muddled the reasoning has become. So after each merge, state in one
+line: how many slices this session has landed, and whether a fresh session would now be the
+better choice. Say it even when the answer is no.
+
+Restarting is cheap by construction — the backlog holds the work, `docs/notebook.md` holds the
+reasoning, this file holds the rules. Restarting *mid-slice* is not: an unopened PR on a
+half-built branch is the one state that costs something to resume. So the recommendation is
+always "at the next seam", never "right now" unless the tree is clean and on `main`.
+
 ### Stop conditions — the only things that still need Melvin
 
 Halt, open an issue labelled `blocked` + `build:melvin`, and say so plainly in the session:
