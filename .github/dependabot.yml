@@ -89,6 +89,15 @@ updates:
     schedule:
       interval: weekly
     groups:
+      # A lockstep family: @nestjs/core@12 imports @nestjs/common/internal, a
+      # subpath that only exists in @nestjs/common@12. Bumped one at a time they
+      # produce ERR_MODULE_NOT_FOUND at runtime, so four separate major PRs were
+      # four PRs that could never go green (#69-#72, 2026-09-08). Deliberately
+      # includes majors, which is the exception to the rule below — the reason
+      # majors normally arrive alone is that they should be read one at a time,
+      # and that does not apply to packages which cannot move independently.
+      nestjs:
+        patterns: ["@nestjs/*"]
       minor-and-patch:
         patterns: ["*"]
         update-types: ["minor", "patch"]
