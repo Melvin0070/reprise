@@ -24,25 +24,56 @@ isn't already named, take the lowest-numbered unblocked issue in the current mil
 issue for the plan section that governs it, and read that section before writing anything. If
 resuming mid-task, run `pnpm verify` first and confirm a green baseline before changing anything.
 
-### Collaboration mode — "I build, you review."
+### Autonomous mode
 
-Melvin is a final-year student with ~1.5 years experience, learning proper software development.
-Work ONE vertical slice at a time and teach through it:
+Melvin is not in the build loop. Set 2026-09-08, superseding the "I build, you review" model
+that stood until then: he asked for autonomous delivery, and that is his call to make. Do not
+stop for approval, do not propose slice boundaries for review, do not idle between slices.
 
-1. State the contract and the test you'll write.
-2. Test-first: red → green → refactor.
-3. Show the diff and the WHY behind each choice.
-4. WAIT for review and approval before committing or merging.
-5. Next slice.
+The loop, one vertical slice at a time:
 
-Keep commits small and reviewable. Never batch multiple issues silently. This is a learning
-collaboration, not autonomous delivery — code Melvin never reasoned through is code he cannot
-defend, and the Project Defense (Explain → Justify → Tradeoff → Scale & Failure) checks every line.
+1. Take the lowest-numbered unblocked issue in the current milestone; read the plan section
+   that governs it.
+2. Write the failing test from the T-task's own `Verify:` line. Red.
+3. Implement until green. Refactor.
+4. `pnpm verify` — real output, no exceptions.
+5. Run the review gate below. Blocking findings get FIXED in the same slice, never deferred.
+6. Branch, commit, PR, merge on green CI. Close the issue.
+7. Append what happened to `docs/notebook.md`. Next slice.
 
-### Slice boundaries are mine to approve
+Keep commits small and reviewable anyway — the commit history is read as a senior-engineer
+signal and is part of the artifact. Never batch multiple issues into one commit.
 
-On a multi-part issue, propose the slice boundaries — or the reason to merge them — BEFORE
-building, and let Melvin decide. Never collapse a review checkpoint unilaterally.
+**What is lost by Melvin not being in the loop, and the mitigation.** The Project Defense
+(Explain → Justify → Tradeoff → Scale & Failure) questions him line by line on code he did not
+write. Nothing fully replaces having built it. The mitigation: every slice ships a defense entry
+in `docs/notebook.md` answering all four rungs for the code it added. Write those for a reader
+who was not there — they are the only study material he will have.
+
+### The review gate replaces the human reviewer
+
+No slice merges without it. With no second pair of human eyes, this gate is the only thing
+between a plausible-looking diff and `main`:
+
+- **Always** — `plan-conformance` (diff vs. the T-task's `Files:`/`Verify:` lines, and scope
+  creep) and `defense-examiner` (all four rungs per changed file; an unanswerable rung is
+  **blocking**, not advisory — it means the code does not explain itself).
+- **`worker/` or `infra/` touched** → `threat-auditor` (Opus). Mandatory, never skipped.
+- **`web/` touched** → `design-fidelity` + `a11y-auditor`.
+- **A shared seam touched** → `contract-guard`.
+- Every finding is adversarially verified by a fresh agent before it counts, so noise never
+  reaches the fix list. Findings that survive are fixed in the slice that raised them.
+
+### Stop conditions — the only things that still need Melvin
+
+Halt, open an issue labelled `blocked` + `build:melvin`, and say so plainly in the session:
+
+- **Credentials, billing, or identity.** `fly auth login`, `fly secrets set`, creating the
+  GitHub OAuth app, provisioning paid infrastructure. These cannot be done on his behalf.
+- **Flipping the repo public.**
+- **A decision that contradicts the APPROVED spec** rather than filling a gap in it.
+
+Everything else is yours to decide and to do.
 
 ### Verify before commit (non-negotiable)
 
@@ -50,7 +81,13 @@ building, and let Melvin decide. Never collapse a review checkpoint unilaterally
 pnpm verify   =   pnpm ultracite check && pnpm -r typecheck && pnpm -r test
 ```
 
-CI runs exactly these three. A red CI is a stop-the-line event. Commit or push only when asked.
+CI runs exactly these three. A red CI is a stop-the-line event: fix it before anything else and
+never merge past it. Commit, push and merge freely otherwise.
+
+`main` SHOULD carry a ruleset requiring a pull request and all three CI jobs, so the gate is
+mechanical rather than a promise. As of 2026-09-08 it does NOT — creating it was blocked, and the
+open item is tracked in `docs/notebook.md`. Check `gh api repos/Melvin0070/reprise/rulesets`; while
+it returns `[]`, the review gate is only as strong as this instruction, so do not skip it.
 
 CI additionally runs what cannot run per-commit: Playwright E2E, the isolation suite (Linux runner
 only — OV-8), and k6 in the step-3 window. Those are a superset, never a substitute. `pnpm verify`
@@ -93,40 +130,36 @@ is what gates a commit.
 - **No scope creep.** Planning freeze until v0.1 ships: new thinking goes to `docs/notebook.md` or
   an issue, not a new root-level doc.
 
-### Complexity must be earned by evidence
+### Complexity is earned by evidence — measured, not shipped
 
-Build the simple version, measure where it breaks, let the numbers buy the complex version. This is
-not sandbagging — it is how you avoid premature optimization, and it produces the tradeoff evidence
-the Project Defense demands. It governs at the five forks below and nowhere else.
+The five forks below were budgeted *teaching moments*, and the premise under every one of them was
+a human learning by shipping the naive version and watching it break. With Melvin out of the build
+loop that premise is gone, so as of 2026-09-08 the mechanism changes:
 
-Guardrails — a downgrade without all five is just bad code with a story attached:
+**Build the correct version first. Prove the naive one wrong in a benchmark, not in production.**
 
-- **No downgrade without a pre-registered experiment.** Before choosing the simple version, write
-  down how we will make it fail and what we will measure, in `docs/learning-log/`. If neither of us
-  can name that experiment, the downgrade teaches nothing — build it right the first time.
-- **A downgrade never reaches an unauthenticated surface.** The experiment runs locally or behind
-  the OV-1 key. Measuring a ReDoS in a unit test is the lesson; shipping one is not.
-- **The simple version is a swap, not a wall.** Factor the seam first, so the upgrade replaces a
-  module rather than a subsystem. If the upgrade would be a rewrite, this isn't a teaching moment —
-  build it right the first time.
-- **One-way doors get built right immediately.** You cannot A/B a container escape. Never
-  downgrade: sandbox exposure, worker credential blast radius (OV-10), committed secrets, auth on
-  execution, egress default-deny, or URL identity (`short_id`, never `content_hash` — see
-  `reviews/learnings.jsonl`; URLs are forever).
-- **WIP limit: max 2 open downgrades.** The upgrade PR is scheduled before the downgrade lands.
-  Debt that never gets paid isn't a lesson, it's just debt.
+For each fork, still pre-register the experiment in `docs/learning-log/` and still run it — as a
+committed benchmark that measures the naive implementation beside the real one. That yields the ADR
+with real numbers, which is what the plan actually wanted, while `main` never carries a
+known-inferior implementation and no upgrade debt is created.
 
-| Fork | Simple version | Upgrade | Lesson |
+| Fork | Naive version (benchmark only) | What ships | The number the benchmark must produce |
 |---|---|---|---|
-| Execution (v0.1) | Inline in the HTTP handler | Redis + BullMQ | Head-of-line blocking, no backpressure |
-| Regex contract (T6) | Native `RegExp` | RE2 | ReDoS — user input as a DoS vector |
+| Execution | Inline in the HTTP handler | Redis + BullMQ | Head-of-line blocking under concurrent submits |
+| Regex contract (T6) | Native `RegExp` | RE2 | `(a+)+$` wall-clock against a long input, vs. RE2 |
 | Event log (T13) | One INSERT per event | Buffered batch writes | Write amplification under print-flood |
-| Collab sync (T1) | Broadcast full doc / LWW | Yjs CRDT | Concurrent edits clobber — why CRDTs exist |
-| Reconnect (T10) | Naive resubscribe | Subscribe-then-backfill + seq dedup | Silent data loss in the gap window |
+| Collab sync (T1) | Broadcast full doc / LWW | Yjs CRDT | Updates lost under concurrent edits |
+| Reconnect (T10) | Naive resubscribe | Subscribe-then-backfill + seq dedup | Events lost in the gap window |
 
-**This table overrides the plan where they conflict** — specifically 5A/step 1, which specifies
-`submit → queue → worker`. v0.1 runs inline; the queue is earned. Every other 5A commitment (crude
-jail, no Docker, deployed day 1, OV-1 key gate) stands untouched.
+Row one is the exception, because it already happened: v0.1's inline execution **is shipped**, and
+its experiment is already pre-registered in `docs/learning-log/001-inline-execution.md`. Run that
+experiment against the deployed skeleton, record the number, then build the queue. Do not ship a
+second inline subsystem on the strength of it.
+
+**One-way doors are built right immediately and never get an experiment.** You cannot A/B a
+container escape. Never downgrade: sandbox exposure, worker credential blast radius (OV-10),
+committed secrets, auth on execution, egress default-deny, or URL identity (`short_id`, never
+`content_hash` — see `reviews/learnings.jsonl`; URLs are forever).
 
 The sandbox ships simple-first by the plan itself, not as a budgeted downgrade: T5 crude jail
 (non-root + rlimits + timeout + SIGKILL) → step 3 hardening (namespaces + cgroups v2 + seccomp).
@@ -134,15 +167,17 @@ Keep it API-key-gated (OV-1) and never public while crude.
 
 ### At a fork
 
-**Normal fork** — an unplanned decision the plan doesn't cover, where reversing is cheap: present
-the plan's prescription, the simpler option, the experiment that would expose the difference, and a
-recommendation. Keep it to a compact block. Melvin decides.
+Melvin is not available to decide. Resolve in this order, and never block the loop waiting:
 
-**Load-bearing fork** — where a competent engineer would plausibly choose differently AND reversing
-later costs real work: lay out the options and their consequences and WITHHOLD the recommendation.
-Melvin picks and states a one-line why first. Then compare, and record both positions in
-`docs/notebook.md` — including the disagreement, and including which of us the evidence later
-proved right.
+1. **The APPROVED spec decides.** `flagship-design-plan.md` already carries ~60 reviewed decisions
+   across four review passes. If it covers the fork, follow it — it is the spec, not a suggestion.
+2. **Otherwise the engineering standards above decide.** Optimize for the artifact: quality,
+   simplicity, robustness, long-term maintainability. Development cost gets no weight.
+3. **Record it either way.** `docs/notebook.md` gets the fork, the options, what was chosen, and
+   what evidence would prove the choice wrong. A fork resolved without a record is a fork that gets
+   relitigated by the next session.
+4. **Load-bearing and genuinely balanced?** Choose, ship, and label the issue `defense-critical` so
+   it surfaces for Melvin's review later. Deciding badly is recoverable; stalling is not.
 
 ### The learning log
 
