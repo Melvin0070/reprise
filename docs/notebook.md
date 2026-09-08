@@ -281,3 +281,75 @@ alone and legible.
 major across four packages. Green CI is necessary and not sufficient for either. They
 go through the review gate like any other slice, and the node bump specifically needs
 `threat-auditor`, since `infra/` is the image that executes untrusted code.
+
+---
+
+## 2026-09-08 — The walking skeleton runs on the real target (T5, #4)
+
+`POST /submissions` reached terminal `succeeded` on Fly, executed in the jail. Both halves
+of T5's verify line hold, on the deployed artifact rather than in a test:
+
+```
+$ curl -s https://reprise-api.fly.dev/submissions -X POST \
+    -H 'Content-Type: application/json' \
+    -H "Authorization: Bearer $REPRISE_KEY" \
+    -d '{"language":"python","code":"print(\"hello\")"}'
+{"duration_ms":79,"exit_code":0,"state":"succeeded","stderr":"","stdout":"hello\n","truncated":false}
+```
+
+Unkeyed, the same request returns 401 with the envelope, `WWW-Authenticate: Bearer`. An
+empty bearer token is rejected too, not treated as absent — which is the more interesting
+of the two, because "absent" and "present but empty" taking different code paths is a
+classic auth bypass shape.
+
+**On the 79ms.** It is one sample, from one region, on a warm machine, for a
+`print("hello")`. It is NOT a p50, a p95, or anything that goes near a claim. The rule
+stands: no latency number is quotable until k6 has measured it in the step-3 window. It
+is recorded here because the first observation is worth having, not because it means
+anything yet.
+
+**Explain.** An HTTP request carrying language + code reaches a NestJS controller, passes
+the OV-1 key guard, is parsed into a typed submission, and is handed to `runSubmission`,
+which writes the code to a temp workspace and spawns it under `prlimit` as an unprivileged
+uid in its own process group with an empty environment and closed stdin. The child's exit
+code and signal are classified into the 7A terminal state vocabulary, output is captured
+under a byte cap, the workspace is removed, and the result is mapped to the snake_case
+wire shape at the controller boundary.
+
+**Justify.** Every layer here exists because a shortcut at it was rejected for a reason
+already recorded: no Docker on the sandbox path (5A — the crude jail spawns directly and
+step 3 hardens it in place, so no throwaway isolation code); the jail as a pure module
+with the HTTP handler as a thin caller, so the worker can call the identical function
+later without a rewrite; deployed on day one rather than after hardening, because a jail
+that only works on the dev host has proven nothing about the thing that ships. Fly rather
+than any managed PaaS because step-3 hardening needs a kernel, which is the same reason
+Sprites was rejected earlier today.
+
+**Tradeoff.** This is the crude tier, and it is honest about what that means: it contains
+fork bombs, memory exhaustion and infinite loops, and it does NOT contain network exfil or
+container escape, and only reduces filesystem escape. The price of shipping it now is that
+the static OV-1 key is the entire boundary between the internet and a process running
+attacker-supplied code. That is why execution is auth-gated and why this must never go
+public while the tier is crude. The second cost is inline execution: one run occupies a
+request, so the 25-request concurrency ceiling is doing real work as a bound.
+
+**Scale and failure.** The next thing to break is head-of-line blocking under concurrent
+submits, which is exactly what `docs/learning-log/001-inline-execution.md` pre-registered
+and which is now runnable for the first time, because it needed a deployed skeleton to run
+against. After that: scale-to-zero means a cold request pays a machine boot, and once
+Redis/BullMQ lands, Fly Proxy cannot see a queued job at all — a deep-linked run would sit
+on a stopped worker forever (E16, T55's job). The 512MB machine gives the Node parent
+headroom above the child's 256MB RLIMIT_AS; a jailed child cannot OOM the parent, but 25
+concurrent ones would.
+
+**Found while verifying, filed not fixed.** Every error response points at
+`docs/api.md#<code>`, and that file does not exist — `DOCS_BASE` in
+`shared/api-error/src/envelope.ts:63` is unconditional. An envelope field whose purpose is
+routing a confused caller currently routes them to a 404, on a repo that goes public.
+Filed into #50 (T48), which owns the envelope, with the fix scoped to include a test
+asserting every `ErrorCode` has an anchor so the drift cannot recur silently.
+
+**Operational note.** `fly secrets set REPRISE_API_KEY=$(openssl rand -hex 32)` sets a key
+nobody ever sees — Fly secrets are write-only and `fly secrets list` returns a digest. The
+value is unrecoverable, so generate into a shell variable first and keep it, or plan on a
+rotation and a machine restart.
