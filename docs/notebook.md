@@ -221,6 +221,22 @@ TypeScript versions with every gate green. A dependency updater doing nothing is
 indistinguishable from a repo with no outdated dependencies, so both need confirming
 against real PRs rather than assuming.
 
+**The catalog finding escalated on a second look.** `plan-conformance` independently
+reached the same `catalog:` gap and went further, naming two open upstream bugs. Both
+verified against the tracker rather than taken on the agent's word:
+`dependabot-core#14339` (open, 2026-03-03) — a catalog dependency's committed lockfile
+update drops an entry from the catalogs block, and that lockfile then fails
+`pnpm install --frozen-lockfile`, the first step of the verify job; and
+`dependabot-core#16049` (open, 2026-08-27) — a catalog dependency that also resolves
+elsewhere in the lockfile, routine for exactly these three, resolves to the wrong
+version or raises `NoChangeError` and opens nothing at all.
+
+So "mark it UNVERIFIED and check the first run" was too weak: one branch of that is a
+red stuck PR on the shared toolchain, the other is silent staleness with no signal. The
+three catalog-pinned devDependencies are now explicitly ignored. That trades automation
+for a lockfile that stays installable, and the cost is named in the file: those three go
+stale unless bumped by hand in `pnpm-workspace.yaml`. Revisit when either issue closes.
+
 **Two decisions left open, deliberately.** SHA-pinning the CI actions (buys defence
 against a moved tag; costs readability and churn) and digest-pinning the base image
 (buys reproducibility; costs the automatic patch freshness a mutable tag gives on every

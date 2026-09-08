@@ -58,12 +58,22 @@ updates:
   # One entry for the whole workspace: api/, worker/ and shared/* resolve
   # through the root pnpm-lock.yaml.
   #
-  # UNVERIFIED, check after the first weekly run: @types/node, typescript and
-  # vitest are pinned in pnpm-workspace.yaml's `catalog:` block and appear in
-  # each package.json only as "catalog:". If an update bumps the root manifest
-  # without the catalog, the workspace compiles against two compiler versions
-  # while every gate stays green — a silent split, so confirm the first PR
-  # touches pnpm-workspace.yaml.
+  # The three catalog-pinned devDependencies are ignored on purpose. They live in
+  # pnpm-workspace.yaml's `catalog:` block and appear in each package.json only
+  # as "catalog:", which Dependabot does not yet handle correctly — two open
+  # upstream bugs, both verified against the tracker rather than recalled:
+  #
+  #   dependabot-core#14339 (open, 2026-03-03) — a catalog dependency's committed
+  #     lockfile update DROPS an entry from the catalogs block. That lockfile then
+  #     fails `pnpm install --frozen-lockfile`, which is the first step of the
+  #     verify job, so the PR lands red and stuck.
+  #   dependabot-core#16049 (open, 2026-08-27) — a catalog dependency that also
+  #     resolves elsewhere in the lockfile (routine for exactly these three)
+  #     resolves to the wrong version or raises NoChangeError and opens nothing.
+  #
+  # Ignoring them trades automation for a lockfile that stays installable. The
+  # cost is real and named: these three now go stale unless bumped by hand in
+  # pnpm-workspace.yaml. Revisit when either issue closes.
   #
   # Grouped because the loop merges on green and twelve single-dependency PRs a
   # week would bury the milestone work. The bill is bisection: a red group names
@@ -77,5 +87,9 @@ updates:
       minor-and-patch:
         patterns: ["*"]
         update-types: ["minor", "patch"]
+    ignore:
+      - dependency-name: "@types/node"
+      - dependency-name: "typescript"
+      - dependency-name: "vitest"
     commit-message:
       prefix: "chore(deps)"
