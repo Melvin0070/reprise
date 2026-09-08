@@ -177,3 +177,73 @@ workloads to physicals. Useful Defense ammunition on the Scale & Failure rung.
 the plan already stated ("the same core product Judge0, Piston, E2B, and Modal sandboxes are
 built on"). A well-marketed product in the same space makes the domain more legible to a
 reader, not less — the signal was never that nobody else built one.
+## 2026-09-08 — Supply chain: CI token scope and dependency updates (defense entry)
+
+First slice through the new review gate, and the gate earned its keep immediately:
+`defense-examiner` returned five blocking findings against a two-file diff I had
+written, four of which were factual errors in my own comments. All five were verified
+against the files and fixed in the same slice, per `CLAUDE.md`. Recording them because
+the corrections are more useful than the change.
+
+**What the gate caught.** (1) The file opened by asserting the repo has two supply
+chains; it has three, and the missing one is `infra/Dockerfile` — the artifact
+`fly.toml` deploys, whose apt layer *is* the jail's userland (`prlimit` and `python3`).
+(2) The comment claimed weekly checks protect "those pins"; `ci.yml` uses floating
+major tags, not SHA pins, so a force-moved tag leaves the version looking current and
+Dependabot opens nothing. (3) The actions group omitted `update-types`, so it silently
+included majors — the exact opposite of the policy stated three lines above it. (4) The
+coverage claim ignored `pnpm-workspace.yaml`'s `catalog:` block, where `@types/node`,
+`typescript` and `vitest` actually live. (5) A red grouped dependency PR had no owner:
+the loop's intake is issues in a milestone, and a PR is neither.
+
+**Explain.** `permissions: contents: read` replaces the default `GITHUB_TOKEN` scope
+for all three CI jobs. `dependabot.yml` schedules weekly updates for docker, GitHub
+Actions and npm, grouped to one PR per ecosystem with majors excluded from the groups.
+
+**Justify.** The workflow checks out, installs, and runs three gates; it writes nothing.
+A write scope no step uses is spendable by any of the four third-party actions or the
+whole npm tree that `pnpm install` pulls in. Declared at workflow level because a job
+added later then inherits read-only and must opt into more — the mistake points the
+safe way. Grouping exists because the loop merges on green: twelve single-dependency
+PRs a week would bury the milestone work.
+
+**Tradeoff.** Grouping trades bisection for quiet — a red group names the failing gate,
+not the failing package, and a security patch bundled with a breaking minor waits on the
+breakage. The `permissions` block buys a future 403: the planned container-publish job
+must declare `packages: write` itself. Both accepted; both now written where the next
+reader hits them.
+
+**Scale and failure.** Two silent-failure paths are live and UNVERIFIED until the first
+weekly run: `infra/dev/linux-test.Dockerfile` does not use the default filename and may
+not be scanned, and a catalog-unaware npm update could bump the root manifest while
+leaving `pnpm-workspace.yaml` behind — producing a workspace compiling against two
+TypeScript versions with every gate green. A dependency updater doing nothing is
+indistinguishable from a repo with no outdated dependencies, so both need confirming
+against real PRs rather than assuming.
+
+**The catalog finding escalated on a second look.** `plan-conformance` independently
+reached the same `catalog:` gap and went further, naming two open upstream bugs. Both
+verified against the tracker rather than taken on the agent's word:
+`dependabot-core#14339` (open, 2026-03-03) — a catalog dependency's committed lockfile
+update drops an entry from the catalogs block, and that lockfile then fails
+`pnpm install --frozen-lockfile`, the first step of the verify job; and
+`dependabot-core#16049` (open, 2026-08-27) — a catalog dependency that also resolves
+elsewhere in the lockfile, routine for exactly these three, resolves to the wrong
+version or raises `NoChangeError` and opens nothing at all.
+
+So "mark it UNVERIFIED and check the first run" was too weak: one branch of that is a
+red stuck PR on the shared toolchain, the other is silent staleness with no signal. The
+three catalog-pinned devDependencies are now explicitly ignored. That trades automation
+for a lockfile that stays installable, and the cost is named in the file: those three go
+stale unless bumped by hand in `pnpm-workspace.yaml`. Revisit when either issue closes.
+
+**Two decisions left open, deliberately.** SHA-pinning the CI actions (buys defence
+against a moved tag; costs readability and churn) and digest-pinning the base image
+(buys reproducibility; costs the automatic patch freshness a mutable tag gives on every
+rebuild). Neither is settled; both are cheap to reverse and neither is a one-way door.
+
+**What the gate did NOT catch, worth noting against itself.** One premise in finding 5
+was stale — it cited a notebook entry saying auto-merge and the `main` ruleset were
+blocked, which had been true when written and was fixed an hour earlier. The gate reads
+the repo, so the repo being out of date makes the gate out of date. That is an argument
+for writing notebook entries at the end of a slice, not the middle.
