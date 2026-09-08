@@ -69,6 +69,14 @@ between a plausible-looking diff and `main`:
 - **A shared seam touched** → `contract-guard`.
 - Every finding is adversarially verified by a fresh agent before it counts, so noise never
   reaches the fix list. Findings that survive are fixed in the slice that raised them.
+- **Docs-only carve-out** — a diff touching only `docs/`, `README.md` or the notebook gets
+  `plan-conformance` alone. The Defense rungs interrogate whether code explains itself; prose
+  has no mechanism behind it for them to bite on. Any code, config or workflow file in the diff
+  means it is not docs-only.
+
+Run it with `/review-gate`, which carries the lens-selection table and the adversarial
+verification step. Prose in this file is what the gate IS; the command is how it gets run
+the same way twice.
 
 ### Stop conditions — the only things that still need Melvin
 
