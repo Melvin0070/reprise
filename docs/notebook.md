@@ -247,3 +247,37 @@ was stale — it cited a notebook entry saying auto-merge and the `main` ruleset
 blocked, which had been true when written and was fixed an hour earlier. The gate reads
 the repo, so the repo being out of date makes the gate out of date. That is an argument
 for writing notebook entries at the end of a slice, not the middle.
+
+---
+
+## 2026-09-08 — Dependabot's first run resolves both UNVERIFIED paths
+
+The supply-chain entry above left two things marked UNVERIFIED rather than assumed.
+Merging the config answered both within minutes, so replacing the guesses with the
+measurement while the evidence is in front of us.
+
+**Seven PRs opened on the first run.** #66 and #67 — docker, `node:24-bookworm-slim`
+→ `26`, one per directory. #68 — the grouped npm minor/patch: oxfmt 0.59.0→0.66.0,
+oxlint 1.74.0→1.81.0, ultracite 7.9.4→7.10.8, zod 4.4.3→4.5.4. #69–#72 — NestJS
+11.1.28 → 12.0.1, arriving one PR per package.
+
+**Both open questions closed, with evidence rather than inference:**
+
+1. **The non-default filename IS scanned.** `infra/dev/linux-test.Dockerfile` produced
+   its own PR (#67) alongside `infra/Dockerfile` (#66). No rename needed. This was the
+   finding-1 fix proving itself: nothing else in the repo would ever have proposed a
+   base-image major for the image that runs untrusted code.
+2. **The catalog ignore holds.** Checked all seven diffs for `typescript`, `vitest` and
+   `@types/node`: zero hits, and `pnpm-workspace.yaml` is untouched throughout. Neither
+   dependabot-core#14339 nor #16049 was triggered.
+
+**Also confirmed by construction:** majors arrive ungrouped. Four separate NestJS PRs
+rather than one bundle is exactly the designed behaviour — a major is a behaviour change
+and CI has no reason to fail on one, so under a loop that merges on green it must arrive
+alone and legible.
+
+**Left open, deliberately, for the next slice.** None of the seven is a rubber stamp:
+`node:24 → 26` changes the runtime under the jail, and NestJS 11 → 12 is a framework
+major across four packages. Green CI is necessary and not sufficient for either. They
+go through the review gate like any other slice, and the node bump specifically needs
+`threat-auditor`, since `infra/` is the image that executes untrusted code.

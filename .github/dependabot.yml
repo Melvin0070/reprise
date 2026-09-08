@@ -22,9 +22,10 @@ updates:
   # the image reproducible; digest pinning would, at the cost of the automatic
   # patch freshness, and that trade is not settled (docs/notebook.md).
   #
-  # UNVERIFIED, check after the first weekly run: infra/dev/linux-test.Dockerfile
-  # does not use the default `Dockerfile` filename, so it may not be scanned.
-  # If no PR ever touches it, pin it by hand or rename it.
+  # VERIFIED 2026-09-08, first run: both directories were scanned and each
+  # produced a PR, so the non-default `linux-test.Dockerfile` filename is picked
+  # up and needs no rename. Both landed as node 24 -> 26 majors, which is the
+  # point of the entry — nothing else in the repo would have proposed that.
   - package-ecosystem: docker
     directories:
       - /infra
@@ -74,6 +75,10 @@ updates:
   # Ignoring them trades automation for a lockfile that stays installable. The
   # cost is real and named: these three now go stale unless bumped by hand in
   # pnpm-workspace.yaml. Revisit when either issue closes.
+  #
+  # VERIFIED 2026-09-08, first run: seven PRs opened, none touching the catalog
+  # trio or pnpm-workspace.yaml — so the ignore holds and neither upstream bug
+  # was triggered.
   #
   # Grouped because the loop merges on green and twelve single-dependency PRs a
   # week would bury the milestone work. The bill is bisection: a red group names
