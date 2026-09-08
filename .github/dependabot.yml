@@ -1,17 +1,49 @@
 # Dependency updates.
 #
-# Two ecosystems, because the repo has two supply chains with different risk
-# profiles. GitHub Actions is the sharper one: a compromised action runs inside
-# CI with whatever token scope the workflow grants, so those pins are checked
-# weekly and grouped into a single PR — a stale action is a live risk, not a
-# version-number chore.
+# Three ecosystems, because the repo has three supply chains and they carry very
+# different risk. Listed in order of blast radius, worst first:
 #
-# npm updates land grouped as well. The autonomous loop merges on green CI, and
-# fifty single-dependency PRs would drown the backlog the build actually runs
-# on. Major bumps stay ungrouped so they arrive alone and get read.
+#   docker   — infra/Dockerfile is the artifact fly.toml deploys, and its apt
+#              layer IS the jail's userland: util-linux's `prlimit` applies the
+#              rlimits, python3 is the only v1.0 runtime. A CVE there is a CVE
+#              in the thing that runs untrusted code.
+#   actions  — an action executes inside CI with whatever scope the workflow
+#              grants it. ci.yml now grants `contents: read` and references no
+#              secrets, which is what actually bounds this; the schedule below
+#              only keeps versions fresh.
+#   npm      — application dependencies, none of which run in the sandbox.
 version: 2
 
 updates:
+  # The base image is a MUTABLE tag (node:24-bookworm-slim), deliberately: a
+  # rebuild pulls current 24.x patches without anyone filing a bump. What that
+  # does NOT give is a trigger — nothing schedules the rebuild, and nothing
+  # proposes the major. This entry supplies the second half. It does not make
+  # the image reproducible; digest pinning would, at the cost of the automatic
+  # patch freshness, and that trade is not settled (docs/notebook.md).
+  #
+  # UNVERIFIED, check after the first weekly run: infra/dev/linux-test.Dockerfile
+  # does not use the default `Dockerfile` filename, so it may not be scanned.
+  # If no PR ever touches it, pin it by hand or rename it.
+  - package-ecosystem: docker
+    directories:
+      - /infra
+      - /infra/dev
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore(infra)"
+
+  # Version freshness only. It does NOT defend against a moved tag: ci.yml
+  # references floating majors (actions/checkout@v7, pnpm/action-setup@v6), and
+  # an attacker who force-moves `v6` onto a malicious commit leaves the version
+  # looking current, so Dependabot opens nothing. SHA pinning is the control for
+  # that; the open decision is recorded in docs/notebook.md.
+  #
+  # Majors excluded from the group for the same reason as npm below — an action
+  # major is a behaviour change (v4->v5 changed the default runtime), and under
+  # a loop that merges on green it would otherwise land unread inside a patch
+  # bundle that CI has no reason to fail.
   - package-ecosystem: github-actions
     directory: /
     schedule:
@@ -19,16 +51,28 @@ updates:
     groups:
       actions:
         patterns: ["*"]
+        update-types: ["minor", "patch"]
     commit-message:
       prefix: "chore(ci)"
 
+  # One entry for the whole workspace: api/, worker/ and shared/* resolve
+  # through the root pnpm-lock.yaml.
+  #
+  # UNVERIFIED, check after the first weekly run: @types/node, typescript and
+  # vitest are pinned in pnpm-workspace.yaml's `catalog:` block and appear in
+  # each package.json only as "catalog:". If an update bumps the root manifest
+  # without the catalog, the workspace compiles against two compiler versions
+  # while every gate stays green — a silent split, so confirm the first PR
+  # touches pnpm-workspace.yaml.
+  #
+  # Grouped because the loop merges on green and twelve single-dependency PRs a
+  # week would bury the milestone work. The bill is bisection: a red group names
+  # the failing gate, not the failing package. Splitting means an `ignore` entry
+  # plus @dependabot recreate. Majors stay ungrouped so they arrive alone.
   - package-ecosystem: npm
     directory: /
     schedule:
       interval: weekly
-    # The workspace resolves through the root lockfile, so one entry covers
-    # api/, worker/ and shared/* rather than needing a directory per package.
-    versioning-strategy: increase
     groups:
       minor-and-patch:
         patterns: ["*"]

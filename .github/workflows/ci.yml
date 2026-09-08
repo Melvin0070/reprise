@@ -7,7 +7,14 @@ on:
 
 # The workflow only reads the repo: it checks out, installs, and runs the three
 # gates. Naming that explicitly keeps the job token from carrying write scopes a
-# compromised action in the dependency chain could spend.
+# compromised action in the dependency chain could spend. It bounds blast radius
+# rather than preventing anything — a compromised action still runs code on the
+# runner and still sees the source; what it cannot do is push here or publish
+# under this repo's identity. Small residual today because no job reads a secret.
+#
+# The planned container-publish/deploy job will need `packages: write` declared
+# at ITS job level, or it fails with "Resource not accessible by integration".
+# Deliberate: a loud pre-merge failure beats carrying an unused write scope.
 permissions:
   contents: read
 

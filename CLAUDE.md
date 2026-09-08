@@ -41,6 +41,12 @@ The loop, one vertical slice at a time:
 6. Branch, commit, PR, merge on green CI. Close the issue.
 7. Append what happened to `docs/notebook.md`. Next slice.
 
+Dependency PRs are the one work item the loop's intake misses — they are pull
+requests, not issues in a milestone, so nothing above ever selects one. Check open
+Dependabot PRs at the start of each session: merge green ones, and when a grouped
+one is red, split it (`ignore` the suspect package, then `@dependabot recreate`)
+rather than leaving a security patch parked behind an unrelated breakage.
+
 Keep commits small and reviewable anyway — the commit history is read as a senior-engineer
 signal and is part of the artifact. Never batch multiple issues into one commit.
 
