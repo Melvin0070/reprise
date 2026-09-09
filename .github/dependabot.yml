@@ -15,10 +15,12 @@
 version: 2
 
 updates:
-  # The base image is a MUTABLE tag (node:24-bookworm-slim), deliberately: a
-  # rebuild pulls current 24.x patches without anyone filing a bump. What that
-  # does NOT give is a trigger — nothing schedules the rebuild, and nothing
-  # proposes the major. This entry supplies the second half. It does not make
+  # The base image is a MUTABLE tag, deliberately: a rebuild pulls the current
+  # patches of whatever major infra/Dockerfile pins, without anyone filing a
+  # bump. No version is named here on purpose — this comment said "node:24" and
+  # went false the day #66/#67 landed the 26 bump. What a mutable tag does NOT
+  # give is a trigger — nothing schedules the rebuild, and nothing proposes the
+  # major. This entry supplies the second half. It does not make
   # the image reproducible; digest pinning would, at the cost of the automatic
   # patch freshness, and that trade is not settled (docs/notebook.md).
   #

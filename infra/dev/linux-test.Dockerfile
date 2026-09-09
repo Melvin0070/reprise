@@ -37,9 +37,9 @@ COPY shared/api-error/package.json shared/api-error/
 # the shipped artifact cannot end up on different pnpm majors -- testing against
 # a different pnpm than ships would quietly void what this image is for.
 #
-# The base above is still node:24, which ships corepack; node 26 is what dropped
-# it. `RUN corepack enable` would still work here today, which is exactly why it
-# is gone: see infra/install-pnpm.sh for why this lands ahead of the bump.
+# corepack used to supply pnpm here and the base above no longer ships it; see
+# infra/install-pnpm.sh for the why, including why the removal was unconditional
+# rather than waiting for the bump that has now landed.
 COPY infra/install-pnpm.sh infra/pnpm-version.mjs infra/
 RUN sh infra/install-pnpm.sh
 RUN pnpm install --frozen-lockfile

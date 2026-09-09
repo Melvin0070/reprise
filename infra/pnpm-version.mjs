@@ -3,9 +3,9 @@
 // Resolve the pnpm version the images must install, from the one place that
 // declares it (issue #89).
 //
-// Node 26's image dropped corepack; the Dockerfiles still pin node:24, which
-// has it. infra/install-pnpm.sh's header carries why this lands ahead of that
-// bump, and why corepack was replaced rather than reinstalled from npm.
+// Node 26's image dropped corepack. infra/install-pnpm.sh's header carries why
+// corepack was replaced rather than reinstalled from npm, and why the removal
+// landed a commit ahead of the base bump rather than with it.
 //
 // This exists as a separate decision step, testable without installing
 // anything, for the same reason `preflight-org-check.mjs` does: the interesting

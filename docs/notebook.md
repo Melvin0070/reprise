@@ -910,3 +910,66 @@ through the second gate pass, which is why one auditor's report opens by saying 
 lost because the work was already committed to the branch, but the loop should not rely on that —
 reviewers are given Bash and the tree is not theirs. Committing before the gate runs is what made
 this a footnote instead of an incident.
+
+### 2026-09-09, addendum to #89 — the bump landed hours later, and took four comments with it
+
+`#66` and `#67` merged the same day (`663497b`, `e744091`), so all three bases are now
+`node:26-bookworm-slim` and the #89 entry above is dated history: where it says "the Dockerfiles
+here still pin node:24", read that as true on 2026-09-09 and false by evening.
+
+**What that broke, and it is the same defect twice.** #89's comments leaned on the ordering in the
+present tense — "the base above is still node:24, which DOES ship corepack" — which was correct
+when written and load-bearing, because it stopped a reader concluding the comment was stale and
+restoring `corepack enable`. Four hours later it *was* stale, in four places across three files,
+and it now invited exactly the misreading it existed to prevent. Corrected in `6d3f44c` by
+removing the version literal and keeping only what cannot go stale: the base no longer ships
+corepack, the removal was unconditional, and it landed ahead of the bump so the Dependabot PRs
+could rebase onto Dockerfiles that already built.
+
+The lesson is narrow and worth keeping: **a comment that justifies a change by naming the current
+value of a thing another commit is about to change has a shelf life measured in hours.** Write the
+mechanism, not the reading. #89's gate caught wrong comments twice and this was the third round of
+the same class.
+
+**A fifth instance was outside the directory I swept.** `.github/dependabot.yml` recorded the
+pinning policy as "The base image is a MUTABLE tag (node:24-bookworm-slim), deliberately: a
+rebuild pulls current 24.x patches" — load-bearing, because that comment is what the loop reads
+when triaging the next base bump, and it would have made a 26 → 27 PR look like it skipped a major
+or reverted a landed one. Found only because a reviewer looked outside `infra/`; my own grep was
+scoped to the files I had edited, which is precisely the wrong instinct for a stale-fact sweep.
+
+**The finding that got refuted, recorded because the refutation IS the justification.** A reviewer
+called the phrase "unconditional rather than guarded" a non sequitur, arguing that a
+`if command -v corepack; then corepack enable; else install; fi` guard would satisfy the stated
+reasons equally. A fresh agent told to disprove that refuted it, and the argument is worth having
+written down: the guard is not inert on node 24, it is load-bearing and wrong there. `.nvmrc` is
+24, so the `image` job's runner has corepack; `infra/install-pnpm.test.sh` stubs `npm` and `pnpm`
+but not corepack, so under a guard the happy-path case goes red and both refusal cases pass
+*vacuously* — passing because the corepack branch was taken, not because the resolver refused. A
+guard would have gutted the regression test for the measured root-execution defect. And the second
+stated reason, "no version of this file has ever depended on corepack being present", is false
+under a guard, which makes it the discriminator rather than a vacuous flourish.
+
+**Two things the bump quietly changed that are now open work.**
+
+*The image that runs untrusted code is on Node's Current line, not LTS.* From
+`nodejs/Release`, v26 started 2026-05-05 and becomes LTS on 2026-10-28; v24 is Active LTS until
+2028-04-30. So for roughly seven weeks the jail's host runtime is a Current release, and
+`.github/dependabot.yml` deliberately keeps the tag mutable, which means every rebuild pulls 26.x
+minors of a Current line into the TCB with CI as the only gate. It self-heals on 2026-10-28 and is
+recorded rather than reverted — but "we run the sandbox host on Current" is a Scale-and-Failure
+answer somebody will ask for, and the honest version is that it was a consequence of merging a
+Dependabot major on green, not a decision.
+
+*`.nvmrc` still says 24.* `pnpm verify` and CI's `verify` job therefore run on a Node major that
+ships nowhere. Materially mitigated — `linux-test.Dockerfile`'s `CMD ["pnpm","-r","test"]` runs the
+whole suite on 26 in the `isolation` job, so no isolation property is untested on the shipped
+runtime — but the per-commit gate and a developer's `nvm use` both lag the artifact, and
+Dependabot's docker ecosystem cannot see `.nvmrc`. That is a real hole in OV-8's local-equals-CI
+promise and it has its own issue now.
+
+**And a coverage gap the bump made visible rather than caused:** `env: {}` and closed stdin on the
+jail's spawn have no named test, and a Node major just moved underneath them. Both were verified by
+hand on 26 during the audit (guest env is `{'LC_CTYPE': 'C.UTF-8'}` from python's own PEP 538
+coercion, not inheritance; `sys.stdin.read()` returns `''`), but hand-verification is not a guard
+and both are on the load-bearing property list.

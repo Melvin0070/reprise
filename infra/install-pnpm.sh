@@ -3,18 +3,21 @@
 # Install pnpm into an image, at the version the workspace pins (issue #89).
 #
 # WHY THIS EXISTS AT ALL. Node 26's official image no longer ships corepack, so
-# `corepack enable` exits 127 and the images cannot obtain pnpm. Note the tense:
-# the Dockerfiles still pin `node:24-bookworm-slim`, which DOES still ship
-# corepack (`docker run --rm node:24-bookworm-slim sh -c 'command -v corepack'`
-# answers /usr/local/bin/corepack; the same on 26 answers nothing). So this is
-# not repairing a break that has happened here yet -- it lands ahead of the base
-# bump in #66/#67 so those two rebase onto something that builds, and so the
-# bump itself is a one-line change. Restoring `corepack enable` would pass all
-# three CI jobs today and reintroduce exit 127 the moment the base moves.
+# `corepack enable` exits 127 and the images cannot obtain pnpm at all.
+#
+# This landed one commit BEFORE the base bumped to 26 (#89 ahead of #66/#67), at
+# a point where node:24 still shipped corepack and nothing here was broken yet.
+# That ordering is the reason the removal is unconditional rather than guarded:
+# it let the two Dependabot PRs rebase onto Dockerfiles that already built, and
+# it means no version of this file has ever depended on corepack being present.
+# Restoring `corepack enable` on a node 24 base would have passed all three CI
+# jobs and broken the instant the base moved -- a failure mode worth
+# recognising, because CI could not see it. On the 26 base the tree now pins,
+# `corepack enable` fails the `image` and `isolation` jobs outright.
 #
 # WHY NOT JUST REINSTALL COREPACK. `npm install --global corepack && corepack
-# enable` works on both bases (verified: corepack 0.36.0 installs fine on node
-# 26) and is one line instead of this file, so it is the obvious alternative and
+# enable` works on node 24 and 26 alike (verified: corepack 0.36.0 installs fine
+# on 26, which ships none) and is one line instead of this file, so it is the obvious alternative and
 # it was rejected for three reasons:
 #   1. Pinning the pinner is circular. corepack exists to pin the package
 #      manager, so installing it UNpinned to read a pin is a knot, and pinning
@@ -41,8 +44,8 @@
 #
 # `sh`, not `bash`: it is invoked as `RUN sh infra/install-pnpm.sh`, nothing here
 # needs more than POSIX, and staying POSIX means a base image without bash would
-# not break it. (Both bookworm bases do ship bash, so this is a portability
-# choice, not a necessity.)
+# not break it. (bookworm ships bash 5.2.15 on node 24 and 26 alike, so this is
+# a portability choice, not a necessity.)
 set -eu
 
 HERE=$(cd "$(dirname "$0")" && pwd)
