@@ -86,7 +86,15 @@ run_fly() {
   local what=$1
   shift
   local out err rc
-  err=$(mktemp)
+  # Checked, because an unwritable TMPDIR otherwise leaves `err` empty, fails the
+  # substitution, and reports a local disk problem as though flyctl had errored
+  # -- sending the operator to `fly auth login` for a temp-dir fault, which is
+  # the exact confusion this function exists to prevent.
+  if ! err=$(mktemp); then
+    echo "PREFLIGHT REFUSED: could not create a temp file to capture flyctl's" >&2
+    echo "  stderr. This is a local filesystem problem, not a Fly one." >&2
+    return 2
+  fi
   out=$(fly "$@" 2>"$err")
   rc=$?
   if [ "$rc" != 0 ]; then

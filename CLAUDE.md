@@ -251,7 +251,9 @@ flyctl's output — `fly apps list` alone would have missed both add-ons, becaus
 `apps(type: "container")` and neither is a container app. It is still **advisory**: it fires when
 someone runs it, so provisioning is caught at the next deploy rather than as it happens. Tigris
 storage (`fly ext storage`) is deliberately out of its scope — Tigris is reached over public S3
-endpoints, so it is an egress and credential question, not a 6PN reachability one.
+endpoints, so it is an egress and credential question, not a 6PN reachability one. It is a
+checked list and not a proven-exhaustive one: WireGuard peers, `fly consul`, `fly litefs-cloud`
+and the `fly ext` surfaces are unwalked, and `docs/threat-model.md` carries that list.
 
 ### At a fork
 

@@ -131,8 +131,17 @@ expect $REFUSED 'an unparseable app listing refuses' \
   <<<"$(envelope 'not-json' "$REDIS_EMPTY" "$MPG_EMPTY")"
 expect $REFUSED 'a non-array app listing refuses' \
   <<<"$(envelope '{"Name":"reprise-api"}' "$REDIS_EMPTY" "$MPG_EMPTY")"
+# Carries Organization.Slug so it reaches the Name typecheck rather than
+# refusing one check earlier; otherwise the case name claims more than it pins.
 expect $REFUSED 'an app entry without Name refuses' \
-  <<<"$(envelope '[{"id":"reprise-api"}]' "$REDIS_EMPTY" "$MPG_EMPTY")"
+  <<<"$(envelope '[{"id":"x","Organization":{"Slug":"personal"}}]' "$REDIS_EMPTY" "$MPG_EMPTY")"
+# The mirror of the case above it: the `^` anchor on the mpg empty sentence needs
+# its own fixture, or an edit dropping it would pass while a named cluster sat in
+# the input.
+expect $REFUSED 'a cluster list before the empty mpg sentence refuses' \
+  <<<"$(envelope "$APP_ONLY" "$REDIS_EMPTY" '[{"name":"pg"}]'$'\n'"$MPG_EMPTY")"
+expect $REFUSED 'an object-shaped mpg listing refuses' \
+  <<<"$(envelope "$APP_ONLY" "$REDIS_EMPTY" '{"clusters":[{"name":"pg"}]}')"
 expect $REFUSED 'an unparseable envelope refuses' <<<'not an envelope at all'
 
 if [ "$failures" -gt 0 ]; then
