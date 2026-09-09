@@ -15,7 +15,6 @@
 
 # ---- builder ----
 FROM node:24-bookworm-slim AS builder
-RUN corepack enable
 WORKDIR /app
 
 # Manifests first, so editing a source file does not reinstall dependencies.
@@ -24,6 +23,27 @@ COPY api/package.json api/
 COPY worker/package.json worker/
 COPY shared/submission-state/package.json shared/submission-state/
 COPY shared/api-error/package.json shared/api-error/
+
+# pnpm, at the version `packageManager` pins (#89).
+#
+# Note the base above is still node:24, which DOES ship corepack -- node 26 is
+# what dropped it. `RUN corepack enable` would still work here today, and
+# restoring it would pass all three CI jobs and then break the instant #66/#67
+# bump the base. It is replaced unconditionally so that bump is a one-line
+# change. `infra/install-pnpm.sh` carries the rest of the why, including why
+# corepack was not simply reinstalled from npm, and the validation it has to
+# bring along: an unvalidated read of this field installs and runs anything as
+# root at build time, measured rather than theorised.
+#
+# It runs after the manifests land because package.json IS the version source.
+# The cost is a pnpm re-fetch whenever any manifest changes, where `corepack
+# enable` sat above these COPYs and cached forever. A cheaper ordering exists --
+# COPY the root manifest, install pnpm, then COPY the rest, since only the root
+# manifest carries `packageManager` -- and is not taken: it splits one readable
+# COPY block in two to save an npm install on local rebuilds, and CI builds cold
+# every time, so it buys nothing where it counts.
+COPY infra/install-pnpm.sh infra/pnpm-version.mjs infra/
+RUN sh infra/install-pnpm.sh
 RUN pnpm install --frozen-lockfile
 
 COPY . .
@@ -33,12 +53,23 @@ RUN pnpm build
 FROM node:24-bookworm-slim AS runtime
 
 # util-linux -> prlimit (applies the rlimits and execs the runner with no shell
-# in between); python3 -> the only v1.0 runtime (OV-2, stdlib-only). Nothing
-# else is added: a small userland is the point of the crude tier's image.
+# in between); python3 -> the only v1.0 runtime (OV-2, stdlib-only). A small
+# userland is the point of the crude tier's image, so nothing else is apt-
+# installed.
+#
+# Not "nothing else is added", though: the pnpm below ships in this image, where
+# uid 1001 can read and execute it. That is a real fact about the artifact and
+# not a capability change -- this is the `node` base image, so /usr/local/bin's
+# node and npm already do everything pnpm can, and at the crude tier there is no
+# egress containment at all, which is why execution is key-gated (OV-1) and the
+# image is never public. What did change: pnpm used to sit in root's corepack
+# cache under /root (0700, unreachable by 1001) and now sits world-readable in
+# /usr/local/lib/node_modules. The two infra/ files COPY'd below ship as well,
+# and the smoke check depends on their being here; both are root-owned and not
+# writable by 1001, and running the installer as 1001 fails on /usr/local/lib.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends python3 util-linux \
-  && rm -rf /var/lib/apt/lists/* \
-  && corepack enable
+  && rm -rf /var/lib/apt/lists/*
 
 # The unprivileged identity submitted code runs as. The uid is pinned to match
 # what the deploy passes in and what the isolation image asserts, and so
@@ -56,6 +87,11 @@ COPY api/package.json api/
 COPY worker/package.json worker/
 COPY shared/submission-state/package.json shared/submission-state/
 COPY shared/api-error/package.json shared/api-error/
+
+# The runtime stage installs pnpm separately, because build stages share no
+# filesystem -- same script and same pin, so the two cannot diverge.
+COPY infra/install-pnpm.sh infra/pnpm-version.mjs infra/
+RUN sh infra/install-pnpm.sh
 RUN pnpm install --prod --frozen-lockfile
 
 # The compiled workspace. Each package resolves to its `dist` here because the

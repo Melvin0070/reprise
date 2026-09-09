@@ -2,8 +2,9 @@
 #
 # Prove the production image serves the walking skeleton end to end (issue #4).
 #
-# Builds infra/Dockerfile and, against the container that results — the exact
-# artifact the deploy runs — asserts three things:
+# Builds infra/Dockerfile and asserts, against the exact artifact the deploy
+# runs, that the image carries the pnpm its manifest pins, and then against the
+# container that results:
 #   1. an unknown route carries the DX7 404 envelope;
 #   2. an unkeyed submission is rejected 401 with a WWW-Authenticate challenge
 #      (OV-1);
@@ -36,6 +37,31 @@ fail() {
 
 echo "building $IMAGE ..."
 docker build -q -f infra/Dockerfile -t "$IMAGE" . >/dev/null
+
+# 0. the image ships the pnpm its own manifest pins (#89).
+#
+# infra/install-pnpm.sh already asserts this inside every build stage; asserting
+# it of the finished image is a different claim, because the runtime stage
+# installs pnpm separately from the builder and only the runtime stage ships.
+# The property is what #89 is about -- "no second place to bump" -- and the
+# inline install this replaced could resolve `latest` on a fully green build, so
+# it needs a check that reads the artifact rather than the intent.
+#
+# Both halves run INSIDE the image, on the package.json the image carries. That
+# keeps this script's only host dependency Docker, which is what lets it run as
+# CI's first step with no toolchain set up, and it compares the two things that
+# actually ship rather than one that ships and one on the build host.
+#
+# Not `fail`: there is no container yet, so there are no logs to dump.
+die() { echo "SMOKE FAIL: $1" >&2; exit 1; }
+# The resolver's own stderr reaches this log, so the real cause -- a refused
+# manifest, infra/ missing from the runtime image, or docker failing outright --
+# is readable above this headline rather than hidden by it.
+want=$(docker run --rm --entrypoint node "$IMAGE" infra/pnpm-version.mjs package.json) \
+  || die "could not read a usable pnpm pin from inside the image (see the error above)"
+got=$(docker run --rm --entrypoint pnpm "$IMAGE" --version | tr -d '\r')
+[ "$got" = "$want" ] || die "image ships pnpm $got but its package.json pins $want"
+echo "image carries pnpm $got, matching the pin"
 
 echo "starting container ..."
 docker run -d --name "$NAME" \
