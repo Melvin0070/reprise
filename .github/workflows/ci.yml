@@ -83,3 +83,29 @@ jobs:
 
       - name: production image serves the walking skeleton
         run: bash infra/smoke-image.sh
+
+      # The 6PN deploy preflight (#79), self-tested on fixtures. It rides this
+      # `image` job rather than `verify` because it is an infra guard and `pnpm
+      # verify` is exactly three gates and stays that way; it needs no Docker,
+      # and it is far too small to justify a fourth required status check. The
+      # cost of folding it in: a red `image` no longer means only "the image is
+      # broken" — read which step failed. What CI proves here is the decision
+      # logic, not the org; the live check needs Fly credentials and runs at
+      # deploy time via `pnpm preflight:org`.
+      #
+      # Node is pinned rather than taken from whatever ubuntu-latest ships,
+      # because the check IS a node script and the rest of the repo runs on
+      # .nvmrc. The step above needs none of this: it runs inside Docker.
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+
+      #
+      # No Fly token is wired in here, deliberately: the fixtures need none, and
+      # a token in CI would be a standing credential for an org whose whole
+      # security story is that workers hold none (OV-10). If a later slice adds
+      # a deploy job, the preflight belongs there with its own credential -- and
+      # note that an app-scoped deploy token cannot answer this question, since
+      # its view of the org is one app (docs/threat-model.md).
+      - name: deploy preflight refuses a populated Fly org
+        run: bash infra/preflight-org.test.sh

@@ -606,3 +606,160 @@ lenses. Applied the carve-out's *rationale* instead (the Defense rungs interroga
 explains itself, and prose has no mechanism behind it to bite on) and ran `plan-conformance`
 alone. If that reading is wrong, the fix is to name CLAUDE.md in the carve-out or to exclude it
 explicitly; either way the ambiguity should not survive another session.
+
+---
+
+## 2026-09-09 — The 6PN blast radius: shipped the weaker fix, and said so (#79)
+
+**What the issue left.** #80 had already corrected the false claim in
+`docs/threat-model.md` — the blast radius is the Fly organization, not one microVM, because
+every app in an org shares a private IPv6 network and a jailed process reaches `[fdaa::3]:53`
+→ any `fdaa::/16` peer with no container escape and no kernel bug. Describing the hole is not
+closing it. This slice was the closing half.
+
+**The fork, and why it was not mine to take.** Two options, not equivalent:
+
+- **Dedicated Fly network** (`fly apps create --network`). Makes org peers *unreachable*. The
+  real fix. Networks are fixed at app creation, so it means destroying and recreating
+  `reprise-api` — infrastructure Melvin owns and pays for, which the stop conditions put
+  outside the loop.
+- **Standing constraint.** Keep the org a population of one, so peers are *absent* rather than
+  unreachable. Fully autonomous, and strictly weaker.
+
+Took the second, opened **#88** (`blocked` + `build:melvin`) for the first with the exact four
+commands and the cost stated plainly — destroy, recreate, re-set the secret, redeploy; a
+stateless demo, so no data loss. A blocked issue that makes the decision easy is worth more
+than one that merely records that a decision exists.
+
+**What I built, and the part I want a reader to be suspicious of.** The constraint lives in
+`CLAUDE.md` (prose plus a locked-decisions row), in `fly.toml` where a Fly operator actually
+works, and in `infra/preflight-org.sh` + `infra/preflight-org-check.mjs`, which read the org's
+listings and exit non-zero if anything is there beside the sandbox app. Run before every deploy
+as `pnpm preflight:org`.
+
+The suspicion it deserves: **the preflight is advisory.** It fires when someone runs it. A
+`fly redis create` typed at a terminal is caught on the *next deploy*, not at the moment of
+provisioning — so there is a window in which the org is populated and the guard is silent. It
+also does nothing about 6PN itself; the sandbox can still reach `fdaa::/16`, there is just
+nothing there. The threat model now says exactly this rather than implying an enforcement it
+does not have. A guard whose limits are undocumented is worse than no guard, because it gets
+trusted.
+
+**The first draft was that guard, and it was wrong in the direction that matters.** It ran
+`fly apps list --json`, counted anything that was not `reprise-api`, and printed "the 6PN blast
+radius is one machine". Three defects, all found by the review gate and all confirmed by fresh
+agents told to argue them away:
+
+- **`fly apps list` cannot see the resources the constraint names.** flyctl's query is
+  `apps(type: "container", ...)`. Upstash Redis is an add-on under a different GraphQL root
+  field; Managed Postgres is behind a different API entirely. Neither appears. And both sit on
+  6PN — Fly documents Upstash Redis as having "a private IPv6 address restricted to your Fly
+  organization" and Managed Postgres as "not accessible over the public internet", with
+  `fly mpg proxy` reaching it at an `fdaa::` address. So `fly mpg create` — the path `fly launch`
+  steers you to — would have produced a reachable database that the guard certified as clear.
+  The check now reads all three listings. Neither add-on listing is JSON on the empty path:
+  `fly redis list` has no `--json` at all and prints a table, and `fly mpg list -j` prints an
+  English sentence. Both are matched against the exact shapes flyctl 0.4.100 actually emitted
+  on 2026-09-09, and anything else refuses.
+- **It asserted "alone in the org" from input that never contained the app.** `[]` exited 0, so
+  a listing of the wrong org, or one from a credential that could see nothing, read as clean.
+  The check now refuses unless the sandbox app is *present* in the listing and `fly orgs list
+  --json` shows the org at all. Note carefully what that does *not* fix, because I first wrote
+  down that it did: an app-scoped Fly deploy token returns exactly `[reprise-api]`, which
+  passes the presence check and is byte-identical to a genuinely clean org. The presence check
+  proves the listing is a view of the *right* org, never that the view is *complete*. That gap
+  is closed by convention — such a token must never run this — and by nothing mechanical.
+- **It was not scoped to an org.** `fly apps list` "includes applications from all the
+  organizations the user is a member of". That one is fail-*closed* — an unrelated app in
+  another org would have produced a false refusal naming it as a sandbox peer, with advice to
+  delete it. Harmless to security, corrosive to the habit: the predictable response is to stop
+  running the guard, which is the single failure mode this slice exists to prevent. Every
+  listing is `--org` scoped now, and the checker refuses if a foreign org still appears.
+
+The through-line is that all three are the same mistake — **answering a question about 6PN with
+a query that is not about 6PN** — and the first draft's own header argued against it in the
+abstract while committing it in the concrete. That is the useful thing to have written down.
+
+**The design choice worth defending.** The decision half takes its listings on **stdin** and the
+collecting half runs `fly`. That is the CLAUDE.md "I/O at the edges, core pure" rule applied to a
+shell tool, and it is what makes eighteen cases testable with no Fly account and no network —
+including the ones that matter most, the thirteen refusals. Unreadable input exits **2, not 0**: two
+of the three resource listings are human-formatted output rather than a versioned contract, so
+"flyctl changed its wording" is a likely event, and it must produce a loud deploy failure rather
+than a confident all-clear. The split is also the honest weak point: the collector decides *what
+to ask Fly*, and that half has no test — which is precisely where all three defects above lived.
+
+**Then the gate found a fourth defect, in the test suite itself, and it was the worst one.** Every
+case was piped into the assertion helper — `envelope … | expect …` — and a pipeline runs each
+stage in a subshell, so the failure counter incremented in a child and died there. The suite
+printed `FAIL` lines and then exited **0**. Mutating the checker to certify every input as clear
+produced thirteen visible failures under a green suite. That is #78 exactly: CI green over a guard
+that does not guard, and this time the guard was the thing guarding the guard. Cases now arrive on
+here-strings so the helper runs in the parent, and `harness_self_check` drives one deliberately
+wrong expectation at startup and aborts if the counter does not move — because a self-test whose
+own failure path is untested is what produced this. The canary asserts an unreachable exit code
+rather than reusing a real case's input, so a broken checker surfaces as sixteen named failures
+instead of one "the harness is broken" line that masks them. The same mutation now exits 1.
+
+The lesson is not "use here-strings". It is that **a test suite is a piece of production code with
+no test of its own**, so the only honest way to trust one is to break the thing it watches and
+confirm it screams. That took one `sed` and ten seconds, and it should be the reflex whenever a
+suite is the sole evidence for a security property.
+
+**Two more the gate killed in the same pass.** All four `fly` calls sent stderr to `/dev/null`, so
+an expired session — a routine event — surfaced as "was not an object", which reads as *flyctl
+drifted* and invites the operator to skip the guard rather than log in. flyctl's own error is now
+quoted verbatim and labelled as flyctl talking, and `run_fly` returns rather than exits, because
+every call is a command substitution and an `exit` inside one kills only that subshell. And
+`REPRISE_FLY_APP` is gone: the comment claimed the overrides "cannot widen the check", which was
+false — setting the app and org together retargeted the guard at an entirely different
+environment, so it could bless an empty staging org while the real deploy target held a database.
+The app is now read out of `fly.toml`, the same file `fly deploy` reads, so the guard and the
+deploy cannot disagree about what is being deployed. A wrong *why* is worse than a missing one:
+it is the sentence that gets repeated, and it does not survive one follow-up question.
+
+**What was actually verified, and how.** Against the live org on 2026-09-09 with flyctl 0.4.100:
+`fly orgs list --json` → `{"personal": "Melvin Kannan"}`; `fly apps list --org personal --json` →
+`reprise-api` only; `fly redis list --org personal` → the bare header; `fly mpg list --org
+personal -j` → the empty prose line. All four committed fixtures are that output, not guesses.
+The refusal paths were driven live too — a nonexistent org, and a stub `fly` on PATH that fails
+the way an expired session does — and the mutation test above stands in for "does the suite
+actually fail".
+
+**What is still open, and deliberately.** Tigris storage (`fly ext storage`) is not covered,
+because Tigris is reached over public S3 endpoints — a real blind spot, but an egress and
+credential question rather than a 6PN reachability one, and lumping it in would have made the
+coverage sentence wrong in the other direction. The guard also remains bounded by the credential
+it runs under; the threat model now states that an app-scoped deploy token must never be what
+runs it.
+
+And the coverage list is *checked*, not *proven exhaustive*. flyctl 0.4.100 also offers `fly
+consul`, `fly litefs-cloud`, `fly ext vector`, `fly ext kubernetes` and several SaaS extensions,
+and nobody has walked them one by one to decide which are 6PN peers. WireGuard peers are the
+clearest of these — they hold 6PN addresses outright, `fly ssh console` creates them, and the
+guard does not look. The likely answer is that the
+SaaS ones are public-endpoint and that unmanaged `fly postgres` is a container app the app listing
+already catches — but likely is not the same as checked, and the honest state of this guard is
+"covers the three resource types it was built for". Walking the rest is a small task and belongs
+with #88, where the whole mechanism either gets retired or gets a network behind it.
+
+**Defense — Explain / Justify / Tradeoff / Scale & Failure.**
+*Explain:* four Fly listings go in — three scoped to the org, plus an unscoped `fly orgs list
+--json` whose only job is to prove the credential can see that org at all — and an exit code comes
+out; anything in the org that is not `reprise-api` stops the deploy, and so does any input the
+check cannot interpret.
+*Justify:* the mitigation that is supposed to hold here is OV-10, and OV-10 defends against
+stolen credentials, not reachability — so the second resource in this org does not weaken it
+gradually, it ends it, with nothing appearing to break. That is precisely the failure a standing
+constraint has to be loud about. *Tradeoff:* absence instead of unreachability, and an advisory
+check instead of an enforced one, bought without touching paid infrastructure; the stronger
+version is #88 and is one decision away. *Scale & failure:* it fails closed on malformed JSON, on
+a renamed field, on an unrecognised table header, on a missing sandbox app, on an invisible org,
+on an entry with no `Organization.Slug`, on any `fly` call that errors, and on `fly` being absent.
+It fails open in three ways — when nobody runs it; for resource types nobody has taught it about,
+which today means Tigris, WireGuard peers and the extension surfaces nobody has walked; and when
+the credential running it can see less than the whole org, which an app-scoped deploy token does
+and which no listing reveals. Scale is not the pressure
+it is under; a Fly org holds tens of resources. The pressure is *authority*, and at any real
+scale the answer is not a better preflight but the dedicated network, at which point this script,
+its test, its CI step and the constraint in `fly.toml` are deleted together rather than tuned.

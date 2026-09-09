@@ -192,12 +192,51 @@ reaches rather than betting it can't happen:
     escape at all: attack #5, which this document already lists as *not stopped*, is
     sufficient. **Blast radius ≈ every Machine in the Fly organization.**
 
-    Today that org holds one app, so the practical radius is one machine. The danger is
-    forward-looking: this silently weakens OV-10. Credential-poor workers defend against
-    stolen credentials, not against network reachability — the day a Fly Postgres or Redis
-    is provisioned in this org it is reachable from inside the sandbox with no code change
-    and no new finding. Either the app moves to an isolated Fly network, or nothing else
-    gets provisioned in this org while the tier is crude. Tracked in issue #79.
+    Today that org holds one app, so the practical radius is one machine — confirmed
+    against the live org on 2026-09-09, not assumed. The danger is forward-looking: this
+    silently weakens OV-10. Credential-poor workers defend against stolen credentials, not
+    against network reachability — the day a Fly Postgres or Redis is provisioned in this
+    org it is reachable from inside the sandbox with no code change and no new finding.
+
+    **What is actually in place (#79):** the weaker of the two options — a standing
+    constraint that nothing else is provisioned in this org while the tier is crude, in
+    `CLAUDE.md`, in `fly.toml`, and checked by `pnpm preflight:org`.
+
+    What the check covers, precisely, because a guard trusted past its evidence is worse
+    than none: container apps (`fly apps list --org`), Upstash Redis (`fly redis list`) and
+    Managed Postgres (`fly mpg list`), all scoped to one org. The add-ons are listed
+    separately for a reason — `fly apps list` queries `apps(type: "container")`, so neither
+    appears in it, while both sit on 6PN: Fly gives Upstash Redis "a private IPv6 address
+    restricted to your Fly organization", and says Managed Postgres "is not accessible over
+    the public internet". An apps-only check would have certified an org holding a
+    reachable database as clear. It refuses (exit 2) rather than passing when it cannot see
+    the org, when the sandbox app is absent from the listing, when a `fly` call errors at
+    all, or when flyctl's output is not a shape it recognises.
+
+    It is a checked list, not a proven-exhaustive one. WireGuard peers hold 6PN addresses
+    too — `fly wireguard list` shows them and `fly ssh console` creates them — and they are
+    not checked; nor are `fly consul`, `fly litefs-cloud` or the `fly ext` surfaces, which
+    are probably public-endpoint SaaS but have not been walked one by one. Zero of any of
+    them exist today, which is what makes "a population of one" true right now. Tigris storage is out of scope on purpose: it is reached over
+    public S3 endpoints, making it an egress and credential concern rather than a 6PN one.
+
+    Be equally clear about what it does not buy. It defends against *the org growing*, and
+    not at all against 6PN itself — the sandbox can still reach `fdaa::/16`; there is simply
+    nothing there to reach. It is advisory: it fires only when someone runs it before `fly
+    deploy`, so a `fly redis create` typed at a terminal is caught on the next deploy, not
+    at the moment of provisioning. And it can only see as far as the credential running it.
+    An app-scoped Fly deploy token's view of the org is exactly `[reprise-api]`, which is
+    byte-identical to a genuinely clean org — nothing in the listings distinguishes "the org
+    holds only the sandbox app" from "this credential can only see the sandbox app", and the
+    guard exits 0 on both. So an app-scoped token must never be what runs this. That is
+    closed by convention and by nothing mechanical, and it is untested: no such token has
+    been created to check whether `fly orgs list` would refuse under one first.
+
+    **What would actually close it:** a dedicated Fly network (`fly apps create --network`),
+    which makes org peers unreachable rather than absent. It requires destroying and
+    recreating `reprise-api`, so it is Melvin's call and is tracked in issue #88 as blocked.
+    Until that lands, this section's honest claim is *blast radius ≈ the Fly organization,
+    currently a population of one, by convention and a preflight rather than by the network*.
   - **Single-host privileged compose (self-host):** workers share the host kernel. An
     escape reaches the host. Blast radius ≈ the host.
 
