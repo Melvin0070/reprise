@@ -14,7 +14,7 @@
 # confined to the VM, which is the isolation boundary OV-10 relies on.
 
 # ---- builder ----
-FROM node:24-bookworm-slim AS builder
+FROM node:26-bookworm-slim AS builder
 WORKDIR /app
 
 # Manifests first, so editing a source file does not reinstall dependencies.
@@ -50,7 +50,7 @@ COPY . .
 RUN pnpm build
 
 # ---- runtime ----
-FROM node:24-bookworm-slim AS runtime
+FROM node:26-bookworm-slim AS runtime
 
 # util-linux -> prlimit (applies the rlimits and execs the runner with no shell
 # in between); python3 -> the only v1.0 runtime (OV-2, stdlib-only). A small
