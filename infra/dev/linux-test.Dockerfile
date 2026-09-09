@@ -8,7 +8,7 @@
 # This is NOT the sandbox boundary — the jail inside still spawns processes
 # directly (5A: no Docker on the sandbox path). Docker is only supplying the
 # Linux host, the same role Fly's microVM plays in production.
-FROM node:24-bookworm-slim
+FROM node:26-bookworm-slim
 
 # util-linux -> prlimit, which applies rlimits and execs without a shell in the
 # middle (no quoting surface). python3 -> the runner + the attack payloads.
