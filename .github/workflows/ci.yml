@@ -109,3 +109,23 @@ jobs:
       # its view of the org is one app (docs/threat-model.md).
       - name: deploy preflight refuses a populated Fly org
         run: bash infra/preflight-org.test.sh
+
+      # The pnpm pin guards (#89), self-tested on fixtures, riding this job for
+      # the same reasons as the preflight above: infra guards, no Docker needed,
+      # far too small for a fourth required check.
+      #
+      # The smoke step at the top of this job already exercises the happy path
+      # inside a real image build. What these two add is the refusals — the half
+      # that matters, and the half a passing build cannot show. The defect they
+      # exist for had two independent halves, so it takes two files: the
+      # resolver's regex (an unvalidated `packageManager` installs and runs an
+      # arbitrary package as root at image build) and the installer's shell
+      # structure (a command substitution in argument position discards its exit
+      # status, so an empty pin installed `latest` on a fully green build).
+      # Both are pinned, so a simplification back to an inline `node -p` turns
+      # this red instead of shipping.
+      - name: the pnpm pin resolver refuses everything but a plain semver
+        run: bash infra/pnpm-version.test.sh
+
+      - name: the pnpm installer stops before npm when the pin is refused
+        run: bash infra/install-pnpm.test.sh

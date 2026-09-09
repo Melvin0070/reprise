@@ -763,3 +763,150 @@ and which no listing reveals. Scale is not the pressure
 it is under; a Fly org holds tens of resources. The pressure is *authority*, and at any real
 scale the answer is not a better preflight but the dedicated network, at which point this script,
 its test, its CI step and the constraint in `fly.toml` are deleted together rather than tuned.
+
+---
+
+## 2026-09-09 — pnpm comes from the pin, not from corepack (#89)
+
+**What the issue left.** Both Dependabot base-image bumps — #66 (`infra/Dockerfile`) and #67
+(`infra/dev/linux-test.Dockerfile`) — were red on one line each, and it was the same line:
+`corepack enable`, exit 127. Node 26's official image no longer ships corepack. Every other job
+on both PRs was green, so this was a packaging change and not a Node 26 incompatibility in our
+code. This slice removes the blocker; the bump itself stays with Dependabot.
+
+Note the tense carefully, because it is the part a reader will get wrong. The Dockerfiles here
+still pin `node:24-bookworm-slim`, and node 24 **does** still ship corepack
+(`docker run --rm node:24-bookworm-slim sh -c 'command -v corepack'` → `/usr/local/bin/corepack`;
+the same on 26 → nothing). So nothing was broken in this repo when this landed. Restoring
+`RUN corepack enable` today would pass all three CI jobs and would reintroduce exit 127 the
+moment the base moves. That asymmetry — a green-CI change that plants a future break — is why the
+removal is unconditional and why the Dockerfile comments say so in place.
+
+**The first implementation was wrong, and CI could not see it.** The obvious replacement is one
+line:
+
+```
+RUN npm install --global "pnpm@$(node -p "require('./package.json').packageManager.replace(/^pnpm@/,'')")"
+```
+
+That is what this slice shipped first. `pnpm verify` was green, `pnpm smoke:image` was green,
+`pnpm test:linux` was green, on node 24 *and* on node 26. The review gate found two defects in it
+and a fresh adversarial agent — told to disprove each — reproduced both end to end:
+
+1. **A command substitution in argument position discards its exit status.** Delete
+   `packageManager` and `node -p` throws, the substitution yields the empty string, and
+   `npm install --global "pnpm@"` installs **latest** — npm's own `npm-package-arg` normalises an
+   empty spec to the range `*`. Measured: a green `docker build -q` producing an image on pnpm
+   **12.3.4** against a 9.15.9 pin, with the TypeError swallowed because every build path in this
+   repo passes `-q`. The verifier went further and found a fully green *CI* path to it: delete
+   `packageManager`, move the pin to `pnpm/action-setup`'s `version:` input, and all three jobs
+   pass while the deployed artifact carries the wrong pnpm major — pnpm 12 resolves a materially
+   different tree (different peer-hash scheme, four fewer optional binaries), so OV-8's
+   local-equals-CI promise stops holding silently.
+2. **`npm install` accepts far more than a version.** `pnpm@npm:evil@1.0.0`,
+   `pnpm@https://host/x.tgz` and `pnpm@file:/tmp/x.tgz` are all valid specs, so one token in
+   `package.json` decides which tarball runs **as root** during the image build. Measured: a
+   payload's postinstall executing as uid 0 during the npm line, and a `bin.pnpm` shim executing
+   as root on the following `pnpm install`. `corepack enable` refused exactly this — its
+   `parseSpec` requires `semver.valid()` and rejects URLs for a known package manager.
+
+The second one is the one that matters, and it matters for a reason specific to how this repo is
+governed: a diff that edits only `packageManager` in root `package.json` touches nothing under
+`infra/`, so CLAUDE.md's lens table does **not** select `threat-auditor`. With
+`required_approving_review_count: 0`, nothing else looks. The first implementation converted a
+field that corepack validated into an unvalidated root-execution channel, and parked it in the one
+file the mandatory security lens never reads.
+
+**What replaced it.** `infra/pnpm-version.mjs` is corepack's validation without corepack: it
+accepts exactly `pnpm@<major>.<minor>.<patch>` with an optional prerelease, anchored both ends,
+prints the bare version and nothing else, and refuses everything else — a missing or unreadable
+manifest, an absent or non-string field, another package manager, a range, a dist-tag, a partial
+version, an `npm:` alias, an `https:`/`git+`/`file:` spec, stray whitespace. `infra/install-pnpm.sh`
+is the single install site all three build stages run; it reads the version into an
+**assignment** (not an argument), installs with `--ignore-scripts`, and then asserts the installed
+version equals the pin. `infra/pnpm-version.test.sh` (27 cases) and `infra/install-pnpm.test.sh`
+(5 cases) pin both halves in CI, and `infra/smoke-image.sh` gained a step 0 that checks the
+finished image's pnpm against the pin from inside the image.
+
+**Defense — Explain / Justify / Tradeoff / Scale & Failure.**
+
+*Explain:* one manifest field is the only declaration of the pnpm version. A pure decision step
+reads it, validates it, and prints it; one shell script consumes that and installs it; three
+Dockerfile stages call that script. Nothing else names a pnpm version anywhere in the repo.
+
+*Justify:* the decision is split from the install because the interesting half is the refusals,
+and refusals you can only exercise by building an image do not get exercised — split, they are 32
+cases that need no Docker and no network, the same shape and the same reasoning as
+`infra/preflight-org-check.mjs` and its suite. Validation is in Node rather than shell because the
+input is JSON and the slim images carry no `jq`, while `node` is present by definition of the base
+image. One script serves three sites because the version is only pinned in one place if the code
+reading that place is also in one place; three inline copies is the same drift moved up a level,
+where a partial correction leaves the isolation image and the shipped artifact able to resolve
+different pnpm majors — which would void the one property the isolation suite exists for, testing
+what actually ships. corepack was replaced rather than reinstalled from npm (`npm i -g corepack`
+does work on node 26, verified: 0.36.0) for three reasons: pinning the pinner is circular and
+needs a second literal version, which is the very thing this issue is about; corepack's shim
+downloads pnpm lazily on first invocation rather than at the build step that names it, so the
+image stops being hermetic where it claims to install pnpm; and corepack is the component the
+platform just deleted, so building on it again buys the same breakage on some future major.
+`+sha512.<hex>` is **refused** rather than honoured or ignored because npm reads it as semver
+build metadata and drops it — `pnpm@9.15.9+sha512.deadbeef` installs 9.15.9 with the hash never
+checked — and a manifest advertising an integrity pin no build step honours is worse than one
+claiming nothing. Refusing keeps the claim honest and loud until #91 makes the hash load-bearing.
+
+*Tradeoff:* three new files and two CI steps, roughly 350 lines, to replace three words. That is
+the honest headline and it is worth defending rather than hiding: a one-line
+`v="$(...)" && npm install "pnpm@$v"` fixes defect 1 and does nothing at all about defect 2, and
+once validation is in scope it has to live somewhere testable. What it costs beyond the lines: the
+resolver and installer now ship inside the runtime image (root-owned, unwritable by uid 1001), and
+pnpm is world-readable in `/usr/local/lib/node_modules` where it previously sat in root's corepack
+cache under `/root` at 0700. That is a real change to the artifact and not a capability change —
+this is the `node` base image, so node and npm already do everything pnpm can, and the crude tier
+has no egress containment at all, which is why execution is key-gated (OV-1) and the image is
+never public. The pnpm layer also moved below the manifest COPYs, because `package.json` is the
+version source, so any manifest edit now re-fetches pnpm; a cheaper ordering exists (root manifest,
+install, then the rest) and was declined because it splits one readable COPY block to save an npm
+install on local rebuilds while CI builds cold anyway.
+
+*Scale & failure:* the pressure here is platform churn and supply chain, not traffic. It fails
+closed on a missing, renamed, non-string, unparseable or non-semver pin, in three independent
+places — the fixture suites, every `RUN sh infra/install-pnpm.sh`, and the smoke check against the
+finished image — so an unresolvable manifest stops the build before an image exists. The next Node
+removal surfaces exactly the way this one did, and the fix deliberately depends only on `node` and
+`npm`, the two things a node image cannot drop and remain one. A registry unreachable mid-build
+fails the layer loudly and red; the build is now offline-hostile in one more place than it was.
+`packageManager` bumped without the lockfile is caught on the next line by
+`pnpm install --frozen-lockfile`. **The honest limit:** the post-install assertion is a
+self-report. A tampered tarball whose `bin` answers `9.15.9` passes it, and running
+`pnpm --version` at all executes that bin as root — so that line is a drift control against
+accident, not a boundary against an attacker who controls the tarball. Provenance is #91's job.
+
+**The dead end worth recording: the "lost trust root" finding that got argued down.** The
+threat-auditor's second blocking finding was that `corepack enable` verified the pnpm tarball
+against npm signing keys embedded in corepack, while `npm install` verifies only the integrity the
+registry itself serves — so a registry lying self-consistently is accepted. Both halves are true
+and were demonstrated against a local registry serving a tampered tarball with matching integrity
+(npm accepted it; corepack rejected it with `Signature does not match`). The framing that got
+refuted was the sharp version: *"before this diff every build-time fetch had a trust root the repo
+held independently of the responder; after it, exactly one does not."* False —
+`FROM node:24-bookworm-slim` is a mutable tag with no digest, in all three files, before and after.
+That ~349MB image is where apt's Debian keyring, npm, the CA store and the `python3` that executes
+untrusted code all come from. The identical weakness class already sat three lines above, over a
+vastly larger surface, and this gate had never flagged it. So the supply-chain half became #92
+(digest-pin the bases) rather than a blocker on a packaging fix, and #91 carries the integrity pin.
+Fixing tarball integrity while the base image is unpinned would have been sequencing the smaller
+hole first. Both are open; neither is closed by pretending the other does not exist.
+
+**Process note, and it is not a small one.** Three of the four blocking findings on the amended
+diff were *wrong comments*, not wrong code — the `sh, not bash` rationale was false (both bookworm
+bases ship bash 5.2.15), the corepack-vs-npm alternative was rejected only in a commit message
+nobody greps, and the "node 26 dropped corepack" line read as present tense over a `FROM node:24`
+two lines above it. Each one is a sentence that would be repeated in a defense and refuted by a
+single `docker run`. A wrong *why* is worse than a missing one, and this slice produced three of
+them while the code underneath was correct.
+
+**Also worth knowing:** a review agent ran `git checkout main` in the shared working tree partway
+through the second gate pass, which is why one auditor's report opens by saying so. Nothing was
+lost because the work was already committed to the branch, but the loop should not rely on that —
+reviewers are given Bash and the tree is not theirs. Committing before the gate runs is what made
+this a footnote instead of an incident.

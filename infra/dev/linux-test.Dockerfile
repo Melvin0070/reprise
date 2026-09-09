@@ -14,8 +14,7 @@ FROM node:24-bookworm-slim
 # middle (no quoting surface). python3 -> the runner + the attack payloads.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends util-linux python3 \
-  && rm -rf /var/lib/apt/lists/* \
-  && corepack enable
+  && rm -rf /var/lib/apt/lists/*
 
 # The unprivileged uid the jail drops into. The container itself stays root
 # because dropping privileges requires having them first. The uid is pinned so
@@ -33,6 +32,16 @@ COPY worker/package.json worker/
 COPY api/package.json api/
 COPY shared/submission-state/package.json shared/submission-state/
 COPY shared/api-error/package.json shared/api-error/
+
+# pnpm, from the same script the production image uses, so the isolation host and
+# the shipped artifact cannot end up on different pnpm majors -- testing against
+# a different pnpm than ships would quietly void what this image is for.
+#
+# The base above is still node:24, which ships corepack; node 26 is what dropped
+# it. `RUN corepack enable` would still work here today, which is exactly why it
+# is gone: see infra/install-pnpm.sh for why this lands ahead of the bump.
+COPY infra/install-pnpm.sh infra/pnpm-version.mjs infra/
+RUN sh infra/install-pnpm.sh
 RUN pnpm install --frozen-lockfile
 
 COPY . .
