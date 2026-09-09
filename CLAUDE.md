@@ -236,14 +236,22 @@ The sandbox ships simple-first by the plan itself, not as a budgeted downgrade: 
 Keep it API-key-gated (OV-1) and never public while crude.
 
 **Nothing else gets provisioned in the Fly org while the sandbox tier is crude.** No Postgres, no
-Redis, no second app — not in `personal`, not "just to try it". Every app in a Fly org shares one
+Redis, no second app — not in `personal`, not "just to try it". Everything in a Fly org shares one
 private IPv6 network, so a peer created beside `reprise-api` is reachable from inside a jailed run
 via `[fdaa::3]:53` → any `fdaa::/16` address, with no container escape and no kernel bug. OV-10
 says a worker can never reach the data layer; it defends against *stolen credentials* and says
-nothing about *reachability*, so the second app does not weaken OV-10 gradually — it ends it, with
-nothing appearing to break. `pnpm preflight:org` is that constraint with an exit code and belongs
-before every `fly deploy`. The real fix is a dedicated network, which destroys and recreates the
-app and so is Melvin's call (#79 → #88).
+nothing about *reachability*, so the second resource does not weaken OV-10 gradually — it ends it,
+with nothing appearing to break. `pnpm preflight:org` is that constraint with an exit code and
+belongs before every `fly deploy`. The real fix is a dedicated network, which destroys and
+recreates the app and so is Melvin's call (#79 → #88).
+
+Know the guard's edges before trusting it. It covers container apps, Upstash Redis and Managed
+Postgres, and refuses rather than passing when it cannot see the org or does not recognise
+flyctl's output — `fly apps list` alone would have missed both add-ons, because it queries
+`apps(type: "container")` and neither is a container app. It is still **advisory**: it fires when
+someone runs it, so provisioning is caught at the next deploy rather than as it happens. Tigris
+storage (`fly ext storage`) is deliberately out of its scope — Tigris is reached over public S3
+endpoints, so it is an egress and credential question, not a 6PN reachability one.
 
 ### At a fork
 
@@ -280,7 +288,7 @@ These are the ones that get relitigated in practice — each with the evidence t
 | Fly.io Machines or a root VPS. Never Railway. | The sandbox needs real kernel privileges; Railway grants no privileged containers or cgroups-v2 / user-namespace delegation. |
 | No Docker on the sandbox path at step 1 (5A). | The crude jail spawns processes directly and step 3 hardens it in place — zero throwaway isolation code, real target from day one. |
 | `short_id` is the only public identifier. Never `content_hash`. (E7) | `content_hash` excludes title/description, so an unedited fork is byte-identical to its parent — a content_hash URL collides at the first fork. URLs are forever. |
-| One app in the Fly org while the sandbox is crude. (#79) | 6PN makes every org peer reachable from inside a jailed run with no escape, so a second app silently ends OV-10 rather than weakening it. |
+| One app in the Fly org while the sandbox is crude. (#79) | 6PN makes every org peer reachable from inside a jailed run with no escape, so a second resource silently ends OV-10 rather than weakening it. Managed add-ons count: they are 6PN peers that `fly apps list` cannot see. |
 | GitHub OAuth only in v1.0. (D15) | It supplies the avatar + handle that D5's presence labels need. Email/password is out. |
 | v1.0 is stdlib-only. (OV-2) | Third-party deps contradict default-deny egress; lockfile pinning lands in v1.1 with deterministic re-run, where it belongs. |
 | Execution is auth-gated. (OV-1) | A public endpoint running untrusted code is an abuse magnet. One narrow exception: OV-6 guest-run on seeded public postmortems only. |

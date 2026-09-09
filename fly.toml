@@ -20,17 +20,24 @@ primary_region = 'sin'
 dockerfile = 'infra/Dockerfile'
 
 # STANDING CONSTRAINT — nothing else gets provisioned in this Fly org while the
-# sandbox tier is crude (issue #79). Every app in an org shares one private IPv6
-# network, so a Fly Postgres or Redis created beside this one is reachable from
+# sandbox tier is crude (issue #79). Everything in an org shares one private IPv6
+# network, so a Postgres or Redis created beside this app is reachable from
 # inside a jailed run at `[fdaa::3]:53` -> any `fdaa::/16` peer, with no escape
 # and no code change. That is not a hypothetical weakening of OV-10; it is OV-10
-# ceasing to hold the moment the second app exists, silently.
+# ceasing to hold the moment the second resource exists, silently.
 #
 # So before every deploy:  pnpm preflight:org
 #
-# It exits non-zero if this org has grown a second app. Lifting the constraint
-# means moving to a dedicated network (`fly apps create --network`), which
-# destroys and recreates this app — Melvin's call, tracked in issue #79.
+# It exits non-zero if this org holds any container app, Upstash Redis or
+# Managed Postgres besides this app, and refuses outright if it cannot see the
+# org. Read what it is honestly: ADVISORY. It fires when someone runs it, so a
+# `fly redis create` typed at a terminal is caught on the next deploy and not at
+# the moment of provisioning — and it removes targets from 6PN rather than doing
+# anything about 6PN itself.
+#
+# Lifting the constraint means moving to a dedicated network (`fly apps create
+# --network`), which destroys and recreates this app — Melvin's call, tracked in
+# issue #88.
 
 # REPRISE_API_KEY is deliberately absent. Secrets never enter the repo; it is set
 # once with `fly secrets set REPRISE_API_KEY=...` and read at boot (OV-1).

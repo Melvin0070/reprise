@@ -200,13 +200,28 @@ reaches rather than betting it can't happen:
 
     **What is actually in place (#79):** the weaker of the two options — a standing
     constraint that nothing else is provisioned in this org while the tier is crude, in
-    `CLAUDE.md`, in `fly.toml`, and enforced by `pnpm preflight:org`, which reads `fly apps
-    list --json` and exits non-zero if the org has grown a peer. Be clear about what that
-    buys: it defends against *the org growing*, and not at all against 6PN itself. The
-    sandbox can still reach `fdaa::/16`; there is simply nothing there to reach. The
-    preflight is also advisory — it fires only when someone runs it before `fly deploy`,
-    and a `fly postgres create` typed at a terminal is caught on the next deploy, not at
-    the moment of provisioning.
+    `CLAUDE.md`, in `fly.toml`, and checked by `pnpm preflight:org`.
+
+    What the check covers, precisely, because a guard trusted past its evidence is worse
+    than none: container apps (`fly apps list --org`), Upstash Redis (`fly redis list`) and
+    Managed Postgres (`fly mpg list`), all scoped to one org. The add-ons are listed
+    separately for a reason — `fly apps list` queries `apps(type: "container")`, so neither
+    appears in it, while both sit on 6PN: Fly gives Upstash Redis "a private IPv6 address
+    restricted to your Fly organization", and says Managed Postgres "is not accessible over
+    the public internet". An apps-only check would have certified an org holding a
+    reachable database as clear. It refuses (exit 2) rather than passing when it cannot see
+    the org, when the sandbox app is absent from the listing, or when flyctl's output is not
+    a shape it recognises. Tigris storage is out of scope on purpose: it is reached over
+    public S3 endpoints, making it an egress and credential concern rather than a 6PN one.
+
+    Be equally clear about what it does not buy. It defends against *the org growing*, and
+    not at all against 6PN itself — the sandbox can still reach `fdaa::/16`; there is simply
+    nothing there to reach. It is advisory: it fires only when someone runs it before `fly
+    deploy`, so a `fly redis create` typed at a terminal is caught on the next deploy, not
+    at the moment of provisioning. And it can only see as far as the credential running it,
+    which is why an app-scoped deploy token must never be what runs it — that token's view
+    of the org is a single app, which is indistinguishable from an empty org unless the
+    guard refuses first.
 
     **What would actually close it:** a dedicated Fly network (`fly apps create --network`),
     which makes org peers unreachable rather than absent. It requires destroying and
