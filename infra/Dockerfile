@@ -66,7 +66,14 @@ COPY --from=builder /app/shared/api-error/dist shared/api-error/dist
 COPY --from=builder /app/shared/submission-state/dist shared/submission-state/dist
 
 # The runner identity is read at boot; naming it here documents the contract
-# and matches the account created above. A deploy may override it.
+# and matches the account created above.
+#
+# A deploy may override it, but only with another DEDICATED account that owns
+# nothing else. The jail reaps by uid (#78), so pointing this at a shared
+# account — `www-data` on a root VPS is the easy mistake — makes one timing-out
+# submission SIGKILL every process that account owns. `runInJail` refuses to
+# spawn when the uid is not clean, so the misconfiguration stops the instance
+# instead of the host.
 ENV NODE_ENV=production \
     PORT=3000 \
     REPRISE_RUN_UID=1001 \

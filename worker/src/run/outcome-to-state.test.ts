@@ -30,6 +30,14 @@ describe("outcomeToState — one case per terminal state", () => {
     );
   });
 
+  it("maps a run we could not reap to failed-infra", () => {
+    // Not `killed-limit`: that would claim we stopped the run at a ceiling we
+    // set, and the meaning of this outcome is that we could not stop it.
+    expect(
+      outcomeToState({ detail: "1 process(es) still owned", kind: "unreaped" })
+    ).toBe("failed-infra");
+  });
+
   it("maps an unrecognised signal to failed-infra rather than guessing", () => {
     // `failed` claims the user's program was wrong and `killed-limit` claims we
     // stopped it. With an unknown signal neither claim is supported, and

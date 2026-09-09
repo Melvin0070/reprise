@@ -1,11 +1,14 @@
+import { spawn } from "node:child_process";
 import { chmod, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { runInJail } from "./jail.js";
 import { DEFAULT_LIMITS } from "./limits.js";
+import { processesForUid } from "./reap.js";
 
 /**
  * The isolation suite.
@@ -29,6 +32,23 @@ const RUN_UID = 1001;
 const RUN_GID = 1001;
 
 let scratch: string;
+
+/** Poll a condition rather than sleeping a guessed interval. */
+const waitUntil = async (
+  condition: () => Promise<boolean>,
+  timeoutMs = 5000
+): Promise<void> => {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    // oxlint-disable-next-line no-await-in-loop
+    if (await condition()) {
+      return;
+    }
+    // oxlint-disable-next-line no-await-in-loop
+    await delay(25);
+  }
+  throw new Error("waitUntil: condition never held");
+};
 
 beforeAll(async () => {
   if (!canIsolate) {
@@ -110,6 +130,10 @@ describe.skipIf(!canIsolate)("runInJail — containment", () => {
     const result = await runInJail(
       spec(["-c", "import time; time.sleep(60)"], {
         ...DEFAULT_LIMITS,
+        // Below the wall clock, which buildJailArgv now requires: a CPU ceiling
+        // that can never fire is dead weight. Irrelevant to this test either
+        // way — a sleeping process burns no CPU at all.
+        maxCpuSeconds: 1,
         wallClockMs: 1500,
       })
     );
@@ -141,6 +165,7 @@ describe.skipIf(!canIsolate)("runInJail — containment", () => {
     const result = await runInJail(
       spec(["-c", forkBomb], {
         ...DEFAULT_LIMITS,
+        maxCpuSeconds: 1,
         maxProcesses,
         wallClockMs: 4000,
       })
@@ -177,6 +202,7 @@ describe.skipIf(!canIsolate)("runInJail — output flooding", () => {
     const result = await runInJail(
       spec(["-c", 'import sys\nwhile True: sys.stdout.write("x" * 4096)'], {
         ...DEFAULT_LIMITS,
+        maxCpuSeconds: 2,
         wallClockMs: 3000,
       })
     );
@@ -184,4 +210,133 @@ describe.skipIf(!canIsolate)("runInJail — output flooding", () => {
     expect(result.truncated).toBe(true);
     expect(result.stdout.length).toBeLessThanOrEqual(64 * 1024);
   }, 20_000);
+});
+
+/**
+ * A leader that forks a `setsid()` child which keeps fd 1 and 2. The escapee
+ * leaves the process group, so the group kill misses it, and it holds the
+ * output pipes open so `close` cannot fire — the original #78 hang.
+ */
+const ESCAPEE_HOLDING_PIPES = [
+  "import os, sys, time",
+  "pid = os.fork()",
+  "if pid == 0:",
+  "    os.setsid()",
+  "    time.sleep(120)",
+  "    os._exit(0)",
+  'sys.stdout.write("escapee=%d" % pid)',
+  "sys.stdout.flush()",
+  "time.sleep(120)",
+].join("\n");
+
+describe.skipIf(!canIsolate)("runInJail — one run per uid", () => {
+  it("does not let a reaping run kill a concurrent one on the same uid", async () => {
+    // Both halves of this test are load-bearing, and the obvious version of it
+    // is a false guard that passes for the wrong reason.
+    //
+    // Run A has to leave an escapee. With a plain sleeping leader the group
+    // kill succeeds and node reaps the child before the sweep's first census
+    // even yields, so `reapUid` returns without entering its pass loop and
+    // never overlaps run B at all: measured 10/10 passing with the queue
+    // removed entirely.
+    //
+    // Run B has to outlive one pass interval — 0.4s against `PASS_INTERVAL_MS`
+    // (100ms) in `reap.ts`, a coupling across files that nothing enforces, so
+    // raising that constant above 400ms silently turns this back into the false
+    // guard it replaced. A bare `print("hello")` finishes in ~10ms and slips
+    // through the gap between the sweep's kill and its next census; anything
+    // living longer was killed 25/25 before the sweep was brought inside the
+    // queue slot.
+    const [reaped, healthy] = await Promise.all([
+      runInJail(
+        spec(["-c", ESCAPEE_HOLDING_PIPES], {
+          ...DEFAULT_LIMITS,
+          maxCpuSeconds: 1,
+          wallClockMs: 1200,
+        })
+      ),
+      runInJail(
+        spec(["-c", 'import time; time.sleep(0.4); print("survived")'])
+      ),
+    ]);
+
+    expect(reaped.outcome).toEqual({ kind: "timeout" });
+    // Not `killed-limit`: B never approached a ceiling, and being told it did
+    // would blame the user for something we did.
+    expect(healthy.outcome).toEqual({ exitCode: 0, kind: "exited" });
+    expect(healthy.stdout.trim()).toBe("survived");
+  }, 30_000);
+
+  it("refuses to run when the run uid already owns a process", async () => {
+    // The reap SIGKILLs everything the run uid owns, so a uid shared with
+    // anything else turns one submission into a host-wide kill. The crude tier
+    // stated this requirement in three comments and enforced it nowhere.
+    const squatter = spawn(PYTHON, ["-c", "import time; time.sleep(30)"], {
+      detached: true,
+      gid: RUN_GID,
+      stdio: "ignore",
+      uid: RUN_UID,
+    });
+
+    try {
+      await waitUntil(async () => {
+        const owned = await processesForUid(RUN_UID);
+        return owned.includes(squatter.pid ?? -1);
+      });
+
+      await expect(runInJail(spec(["-c", 'print("hello")']))).rejects.toThrow(
+        /already owns/u
+      );
+    } finally {
+      if (squatter.pid !== undefined) {
+        process.kill(squatter.pid, "SIGKILL");
+      }
+      // The next test's own pre-spawn check would refuse if this lingered.
+      await waitUntil(async () => {
+        const owned = await processesForUid(RUN_UID);
+        return owned.length === 0;
+      });
+    }
+  }, 30_000);
+});
+
+describe.skipIf(!canIsolate)("runInJail — nothing outlives the run", () => {
+  it("reaps an escapee that closed its stdio, which no timer would notice (#78)", async () => {
+    // The nastier shape, and the one the first version of this fix missed
+    // entirely. An escapee that only calls setsid() still holds the pipes, so
+    // `close` cannot fire and something eventually has to reap it. This one
+    // closes fd 0, 1 and 2 as well: the pipes drain on schedule, `close` fires
+    // in single-digit milliseconds, the pipe-drain timer is disarmed, and no
+    // sweep is ever armed. Measured before the unconditional post-run sweep:
+    // a 4ms run reporting {exitCode: 0} with the escapee still in the census.
+    const code = [
+      "import os, sys, time",
+      "pid = os.fork()",
+      "if pid == 0:",
+      "    os.setsid()",
+      "    os.close(0); os.close(1); os.close(2)",
+      "    time.sleep(120)",
+      "    os._exit(0)",
+      'sys.stdout.write("escapee=%d" % pid)',
+      "sys.stdout.flush()",
+      "os._exit(0)",
+    ].join("\n");
+
+    const result = await runInJail(
+      spec(["-c", code], {
+        ...DEFAULT_LIMITS,
+        maxCpuSeconds: 1,
+        wallClockMs: 2000,
+      })
+    );
+
+    const escapee = Number(
+      /escapee=(?<pid>\d+)/u.exec(result.stdout)?.groups?.pid ?? -1
+    );
+    expect(escapee).toBeGreaterThan(0);
+    expect(await processesForUid(RUN_UID)).not.toContain(escapee);
+    // The leader really did exit 0 — containment is our problem, not a verdict
+    // on their code.
+    expect(result.outcome).toEqual({ exitCode: 0, kind: "exited" });
+  }, 30_000);
 });

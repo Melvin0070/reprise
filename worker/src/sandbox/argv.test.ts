@@ -42,6 +42,30 @@ describe("buildJailArgv", () => {
     ).toThrow(/wallClockMs/u);
   });
 
+  it("rejects a CPU ceiling the wall clock would always beat", () => {
+    // With maxCpuSeconds at or above the wall clock, RLIMIT_CPU can never fire:
+    // every CPU-bound loop comes back as `timeout` instead of `killed-limit`,
+    // and the run loses the verdict it earned. DEFAULT_LIMITS only claimed this
+    // ordering in a comment until #78.
+    expect(() =>
+      buildJailArgv(
+        { ...LIMITS, maxCpuSeconds: 10, wallClockMs: 10_000 },
+        "/usr/bin/python3",
+        []
+      )
+    ).toThrow(/maxCpuSeconds/u);
+  });
+
+  it("accepts a CPU ceiling strictly below the wall clock", () => {
+    expect(() =>
+      buildJailArgv(
+        { ...LIMITS, maxCpuSeconds: 9, wallClockMs: 10_000 },
+        "/usr/bin/python3",
+        []
+      )
+    ).not.toThrow();
+  });
+
   it("rejects limits that are not finite integers", () => {
     expect(() =>
       buildJailArgv(

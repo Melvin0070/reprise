@@ -49,6 +49,12 @@ export const outcomeToState = (outcome: JailOutcome): TerminalState => {
       return "timeout";
     }
 
+    case "unreaped": {
+      // Not `killed-limit`: that claims we stopped the run at a ceiling we set,
+      // and the whole meaning of this outcome is that we could not stop it.
+      return "failed-infra";
+    }
+
     case "signalled": {
       if (LIMIT_SIGNALS.has(outcome.signal)) {
         return "killed-limit";

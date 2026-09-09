@@ -10,7 +10,7 @@
     "ultracite": "ultracite",
     "check": "ultracite check",
     "fix": "ultracite fix",
-    "test:linux": "docker build -q -f infra/dev/linux-test.Dockerfile -t reprise-linux-test . && docker run --rm reprise-linux-test"
+    "test:linux": "docker build -q -f infra/dev/linux-test.Dockerfile -t reprise-linux-test . && docker run --init --rm reprise-linux-test"
   },
   "devDependencies": {
     "@types/node": "26.1.1",
