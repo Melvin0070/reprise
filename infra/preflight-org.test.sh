@@ -73,9 +73,18 @@ expect() {
 # drive one deliberately wrong expectation, confirm the counter moved, put it
 # back. A self-test whose own failure path is untested is what produced the bug
 # this function exists to prevent.
+# The regress stops here on purpose, and not arbitrarily: this function is not
+# an instance of the pattern that failed. It reads the counter directly with
+# `[ -le ]` and calls `exit 1` itself, with no helper and no pipeline in
+# between, and both of its failure directions are loud.
 harness_self_check() {
   local before=$failures
-  expect $CLEAR 'CANARY, expected to fail' <<<"$(envelope '[]' "$REDIS_EMPTY" "$MPG_EMPTY")" 2>/dev/null
+  # 99 is unreachable -- the checker only ever exits 0, 1 or 2 -- so this canary
+  # fails on any input and stays decoupled from what the checker actually does.
+  # An input that a real case also uses would make a checker regression surface
+  # here as "the harness is broken", masking the case that names the real
+  # defect.
+  expect 99 'CANARY, expected to fail' <<<'{}' 2>/dev/null
   if [ "$failures" -le "$before" ]; then
     echo "FAIL: the harness cannot detect a failing case, so every result below is meaningless" >&2
     exit 1

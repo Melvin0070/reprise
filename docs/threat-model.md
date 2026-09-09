@@ -224,10 +224,13 @@ reaches rather than betting it can't happen:
     not at all against 6PN itself — the sandbox can still reach `fdaa::/16`; there is simply
     nothing there to reach. It is advisory: it fires only when someone runs it before `fly
     deploy`, so a `fly redis create` typed at a terminal is caught on the next deploy, not
-    at the moment of provisioning. And it can only see as far as the credential running it,
-    which is why an app-scoped deploy token must never be what runs it — that token's view
-    of the org is a single app, which is indistinguishable from an empty org unless the
-    guard refuses first.
+    at the moment of provisioning. And it can only see as far as the credential running it.
+    An app-scoped Fly deploy token's view of the org is exactly `[reprise-api]`, which is
+    byte-identical to a genuinely clean org — nothing in the listings distinguishes "the org
+    holds only the sandbox app" from "this credential can only see the sandbox app", and the
+    guard exits 0 on both. So an app-scoped token must never be what runs this. That is
+    closed by convention and by nothing mechanical, and it is untested: no such token has
+    been created to check whether `fly orgs list` would refuse under one first.
 
     **What would actually close it:** a dedicated Fly network (`fly apps create --network`),
     which makes org peers unreachable rather than absent. It requires destroying and

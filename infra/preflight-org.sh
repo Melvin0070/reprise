@@ -18,8 +18,10 @@
 # the org stays a population of one, and this is that constraint with an exit
 # code instead of a promise.
 #
-# This half collects; infra/preflight-org-check.mjs decides. Three listings are
-# needed rather than one, because `fly apps list` queries `apps(type:
+# This half collects; infra/preflight-org-check.mjs decides. Three resource
+# listings are needed rather than one (plus `fly orgs list`, which checks the
+# credential rather than the org's contents), because `fly apps list` queries
+# `apps(type:
 # "container")` and managed add-ons are not container apps: Upstash Redis lives
 # under a different GraphQL root field entirely and Managed Postgres under a
 # different API. Both sit on 6PN. An apps-only check would have certified an org
@@ -31,6 +33,10 @@
 # still reach `fdaa::/16`; the point is that nothing is there. And it is bounded
 # by the credential it runs under, which is why it refuses unless that credential
 # can see the org (see the `fly orgs list` step below).
+# `set -e` is deliberately absent, and it is load-bearing. With it, the
+# `out=$(fly "$@" ...)` in run_fly would abort the shell before `rc=$?` runs,
+# making the whole quote-flyctl's-own-error path below dead code -- the failure
+# would be silent again, which is the bug that path exists to fix.
 set -uo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -41,6 +47,11 @@ ROOT=$(cd "$HERE/.." && pwd)
 # the guard certify an org the deploy will never touch -- and it would do it
 # quietly, in the one direction that matters. An env override was tried and
 # removed for exactly that reason.
+# Matches the exact spelling fly emits, which fly.toml's own header pins ("DO
+# NOT re-run `fly launch` ... Formatting here matches what fly emits"). `head -1`
+# is safe for a stronger reason than first-wins: TOML requires bare top-level
+# keys to precede the first table header, so the first `^app =` is always the
+# top-level one, and a fly.toml with no top-level `app` fails `fly deploy` too.
 APP=$(sed -n "s/^app = '\([^']*\)'.*/\1/p" "$ROOT/fly.toml" | head -1)
 if [ -z "$APP" ]; then
   echo "PREFLIGHT REFUSED: no \`app\` line in fly.toml, so there is no deploy" >&2
@@ -48,11 +59,16 @@ if [ -z "$APP" ]; then
   exit 2
 fi
 
-# The org is overridable, because Fly has no per-app way to ask "which org am I
-# in?" without already being scoped. A wrong value here fails CLOSED rather than
-# open: Fly app names are globally unique, so `$APP` will not appear in another
-# org's listing and the checker refuses on the missing app. The success line
-# prints both values so what was actually checked is never in doubt.
+# The org is stated, not discovered -- deliberately, and not because flyctl
+# cannot tell us: an unscoped `fly apps list --json` carries `Organization.Slug`
+# on every entry, so deriving it is possible. Deriving it would mean auditing
+# whatever org flyctl says the app is in, which is the question answering
+# itself. Stating it lets the guard report "you asked about X and I checked X".
+#
+# A wrong value fails CLOSED rather than open: Fly app names are globally
+# unique, so `$APP` will not appear in another org's listing and the checker
+# refuses on the missing app. The success line prints both values so what was
+# actually checked is never in doubt.
 ORG=${REPRISE_FLY_ORG:-personal}
 
 if ! command -v fly >/dev/null 2>&1; then

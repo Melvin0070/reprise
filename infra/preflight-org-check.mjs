@@ -110,10 +110,17 @@ const appPeers = (apps, { app, org }) => {
         .join(", ")}), so it is not scoped to "${org}"`
     );
   }
-  // The positive claim has to be earned. An app-scoped token, or a listing of
-  // the wrong org, returns a well-formed array that simply does not contain the
-  // sandbox app -- and reporting "alone in the org" from that is asserting
-  // something the input never said.
+  // The positive claim has to be earned: a listing of the wrong org, or one
+  // from a credential that cannot see this org, is a well-formed array that
+  // simply does not contain the sandbox app, and reporting "alone in the org"
+  // from that asserts something the input never said.
+  //
+  // Be precise about what this does NOT establish. It proves the listing is a
+  // view OF THE RIGHT ORG; it says nothing about whether that view is COMPLETE.
+  // A Fly deploy token scoped to `reprise-api` returns exactly `[reprise-api]`,
+  // which passes here and is byte-identical to a genuinely empty org. Nothing
+  // in the envelope can tell those apart. That gap is closed by convention --
+  // such a token must never be what runs this -- and by nothing mechanical.
   if (!apps.some((entry) => entry.Name === app)) {
     refuse(
       `"${app}" was not in the app listing, so this is not a view of the ` +

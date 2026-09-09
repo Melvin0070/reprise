@@ -661,11 +661,14 @@ agents told to argue them away:
   `fly redis list` has no `--json` at all and prints a table, and `fly mpg list -j` prints an
   English sentence. Both are matched against the exact shapes flyctl 0.4.100 actually emitted
   on 2026-09-09, and anything else refuses.
-- **It asserted "alone in the org" from input that never contained the app.** `[]` exited 0. An
-  app-scoped Fly deploy token sees exactly one app, which is indistinguishable from an empty
-  org — so the moment a deploy job existed, the guard would have reported clear no matter what
-  the org held. The check now refuses unless the sandbox app is *present* in the listing, and
-  refuses unless `fly orgs list --json` shows the org at all.
+- **It asserted "alone in the org" from input that never contained the app.** `[]` exited 0, so
+  a listing of the wrong org, or one from a credential that could see nothing, read as clean.
+  The check now refuses unless the sandbox app is *present* in the listing and `fly orgs list
+  --json` shows the org at all. Note carefully what that does *not* fix, because I first wrote
+  down that it did: an app-scoped Fly deploy token returns exactly `[reprise-api]`, which
+  passes the presence check and is byte-identical to a genuinely clean org. The presence check
+  proves the listing is a view of the *right* org, never that the view is *complete*. That gap
+  is closed by convention — such a token must never run this — and by nothing mechanical.
 - **It was not scoped to an org.** `fly apps list` "includes applications from all the
   organizations the user is a member of". That one is fail-*closed* — an unrelated app in
   another org would have produced a false refusal naming it as a sandbox peer, with advice to
@@ -679,8 +682,8 @@ abstract while committing it in the concrete. That is the useful thing to have w
 
 **The design choice worth defending.** The decision half takes its listings on **stdin** and the
 collecting half runs `fly`. That is the CLAUDE.md "I/O at the edges, core pure" rule applied to a
-shell tool, and it is what makes sixteen cases testable with no Fly account and no network —
-including the ones that matter most, the eleven refusals. Unreadable input exits **2, not 0**: two
+shell tool, and it is what makes eighteen cases testable with no Fly account and no network —
+including the ones that matter most, the thirteen refusals. Unreadable input exits **2, not 0**: two
 of the three resource listings are human-formatted output rather than a versioned contract, so
 "flyctl changed its wording" is a likely event, and it must produce a loud deploy failure rather
 than a confident all-clear. The split is also the honest weak point: the collector decides *what
@@ -694,7 +697,9 @@ produced thirteen visible failures under a green suite. That is #78 exactly: CI 
 that does not guard, and this time the guard was the thing guarding the guard. Cases now arrive on
 here-strings so the helper runs in the parent, and `harness_self_check` drives one deliberately
 wrong expectation at startup and aborts if the counter does not move — because a self-test whose
-own failure path is untested is what produced this. Re-running the same mutation now exits 1.
+own failure path is untested is what produced this. The canary asserts an unreachable exit code
+rather than reusing a real case's input, so a broken checker surfaces as sixteen named failures
+instead of one "the harness is broken" line that masks them. The same mutation now exits 1.
 
 The lesson is not "use here-strings". It is that **a test suite is a piece of production code with
 no test of its own**, so the only honest way to trust one is to break the thing it watches and
@@ -751,8 +756,10 @@ check instead of an enforced one, bought without touching paid infrastructure; t
 version is #88 and is one decision away. *Scale & failure:* it fails closed on malformed JSON, on
 a renamed field, on an unrecognised table header, on a missing sandbox app, on an invisible org,
 on an entry with no `Organization.Slug`, on any `fly` call that errors, and on `fly` being absent.
-It fails open in exactly two ways — when nobody runs it, and for resource types nobody has taught
-it about, which today means Tigris and the extension surfaces nobody has walked. Scale is not the pressure
+It fails open in three ways — when nobody runs it; for resource types nobody has taught it about,
+which today means Tigris, WireGuard peers and the extension surfaces nobody has walked; and when
+the credential running it can see less than the whole org, which an app-scoped deploy token does
+and which no listing reveals. Scale is not the pressure
 it is under; a Fly org holds tens of resources. The pressure is *authority*, and at any real
 scale the answer is not a better preflight but the dedicated network, at which point this script,
 its test, its CI step and the constraint in `fly.toml` are deleted together rather than tuned.
