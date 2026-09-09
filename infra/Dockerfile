@@ -26,14 +26,11 @@ COPY shared/api-error/package.json shared/api-error/
 
 # pnpm, at the version `packageManager` pins (#89).
 #
-# Note the base above is still node:24, which DOES ship corepack -- node 26 is
-# what dropped it. `RUN corepack enable` would still work here today, and
-# restoring it would pass all three CI jobs and then break the instant #66/#67
-# bump the base. It is replaced unconditionally so that bump is a one-line
-# change. `infra/install-pnpm.sh` carries the rest of the why, including why
-# corepack was not simply reinstalled from npm, and the validation it has to
-# bring along: an unvalidated read of this field installs and runs anything as
-# root at build time, measured rather than theorised.
+# corepack used to supply pnpm here and the base above no longer ships it.
+# `infra/install-pnpm.sh` carries the why, including why corepack was not simply
+# reinstalled from npm, why this landed a commit ahead of the bump to 26, and the
+# validation it has to bring along: an unvalidated read of this field installs
+# and runs anything as root at build time, measured rather than theorised.
 #
 # It runs after the manifests land because package.json IS the version source.
 # The cost is a pnpm re-fetch whenever any manifest changes, where `corepack
@@ -53,7 +50,12 @@ RUN pnpm build
 FROM node:26-bookworm-slim AS runtime
 
 # util-linux -> prlimit (applies the rlimits and execs the runner with no shell
-# in between); python3 -> the only v1.0 runtime (OV-2, stdlib-only). A small
+# in between); python3 -> the only v1.0 runtime (OV-2, stdlib-only). util-linux
+# is Debian-essential, so `prlimit` is in the bare base already and this line
+# does not put it there -- it declares the dependency, so a base that ever
+# stopped supplying it would fail here rather than at the first jailed run.
+#
+# A small
 # userland is the point of the crude tier's image, so nothing else is apt-
 # installed.
 #
