@@ -1,8 +1,14 @@
 // The decision half of the 6PN deploy preflight (issue #79).
 //
 // Reads one envelope of Fly listings on stdin and answers a single question
-// with an exit code: is anything reachable over this organization's private
-// network besides the sandbox app itself?
+// with an exit code: does this organization hold a container app, an Upstash
+// Redis or a Managed Postgres besides the sandbox app?
+//
+// Say that narrowly, because it is narrower than "what is on the private
+// network". WireGuard peers are 6PN addresses too -- `fly wireguard list` shows
+// them, and `fly ssh console` creates them -- and they are not checked here.
+// Zero exist today. The guard covers the three resource types it was built for,
+// and the day that stops being the honest sentence, this comment is wrong.
 //
 //   0  clear      1  the org holds a peer      2  cannot tell, refusing
 //
@@ -34,7 +40,12 @@ const REDIS_HEADER = [
   "READ REGIONS",
 ];
 
-const MPG_EMPTY = /^No managed postgres clusters found in organization\b/u;
+// Anchored at both ends against the trimmed output. Without the `$`, anything
+// merely BEGINNING with the empty sentence reads as empty -- and the whole
+// point of this file is that a positive claim has to be earned. The capture is
+// the org name, checked below against the org actually asked about.
+const MPG_EMPTY =
+  /^No managed postgres clusters found in organization (?<org>\S+)$/u;
 
 class RefuseError extends Error {
   constructor(message) {
@@ -80,9 +91,18 @@ const appPeers = (apps, { app, org }) => {
   // `fly apps list` spans every org the user belongs to unless --org is passed.
   // The collector passes it; this re-checks, because a listing that carries a
   // foreign org means the scoping did not take and the peer set is wrong.
-  const foreign = apps.filter(
-    (entry) => entry.Organization && entry.Organization.Slug !== org
-  );
+  //
+  // Organization is required, not optional. If it were optional, a flyctl
+  // rename of that field would quietly turn this whole re-check into a no-op
+  // while docs/threat-model.md still promised it -- the failure mode is a
+  // guard that reads as present and does nothing.
+  if (!apps.every((entry) => typeof entry.Organization?.Slug === "string")) {
+    refuse(
+      "an entry from `fly apps list --json` carried no Organization.Slug, so " +
+        "the listing cannot be confirmed as scoped to one org"
+    );
+  }
+  const foreign = apps.filter((entry) => entry.Organization.Slug !== org);
   if (foreign.length > 0) {
     refuse(
       `the app listing carried apps from another organization (${foreign
@@ -132,7 +152,7 @@ const redisPeers = (raw) => {
 // "not accessible over the public internet", and `fly mpg proxy` reaches it at
 // an fdaa:: address. `fly mpg list -j` prints prose rather than `[]` when the
 // org holds none, so both shapes are accepted and nothing else is.
-const mpgPeers = (raw) => {
+const mpgPeers = (raw, org) => {
   if (typeof raw !== "string") {
     refuse("the managed-postgres listing was not text");
   }
@@ -140,7 +160,17 @@ const mpgPeers = (raw) => {
   if (trimmed === "") {
     refuse("`fly mpg list -j` printed nothing");
   }
-  if (MPG_EMPTY.test(trimmed)) {
+  const empty = MPG_EMPTY.exec(trimmed);
+  if (empty) {
+    // flyctl names the org it answered about. Checking it closes the gap
+    // between "flyctl replied" and "flyctl replied about the org we asked
+    // about" -- otherwise an answer concerning some other org reads as proof
+    // that this one is clean.
+    if (empty.groups.org !== org) {
+      refuse(
+        `\`fly mpg list\` answered about "${empty.groups.org}", not "${org}"`
+      );
+    }
     return [];
   }
   let clusters;
@@ -166,7 +196,7 @@ const decide = (envelope) => {
   return [
     ...appPeers(apps, { app, org }).map((name) => `app        ${name}`),
     ...redisPeers(redis).map((name) => `redis      ${name}`),
-    ...mpgPeers(mpg).map((name) => `postgres   ${name}`),
+    ...mpgPeers(mpg, org).map((name) => `postgres   ${name}`),
   ];
 };
 

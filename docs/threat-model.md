@@ -210,8 +210,14 @@ reaches rather than betting it can't happen:
     restricted to your Fly organization", and says Managed Postgres "is not accessible over
     the public internet". An apps-only check would have certified an org holding a
     reachable database as clear. It refuses (exit 2) rather than passing when it cannot see
-    the org, when the sandbox app is absent from the listing, or when flyctl's output is not
-    a shape it recognises. Tigris storage is out of scope on purpose: it is reached over
+    the org, when the sandbox app is absent from the listing, when a `fly` call errors at
+    all, or when flyctl's output is not a shape it recognises.
+
+    It is a checked list, not a proven-exhaustive one. WireGuard peers hold 6PN addresses
+    too — `fly wireguard list` shows them and `fly ssh console` creates them — and they are
+    not checked; nor are `fly consul`, `fly litefs-cloud` or the `fly ext` surfaces, which
+    are probably public-endpoint SaaS but have not been walked one by one. Zero of any of
+    them exist today, which is what makes "a population of one" true right now. Tigris storage is out of scope on purpose: it is reached over
     public S3 endpoints, making it an egress and credential concern rather than a 6PN one.
 
     Be equally clear about what it does not buy. It defends against *the org growing*, and

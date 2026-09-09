@@ -34,12 +34,25 @@
 set -uo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+ROOT=$(cd "$HERE/.." && pwd)
 
-# The one app the org may hold while the sandbox tier is crude, and the org it
-# lives in. Overridable so a fork or a second environment can run the same guard
-# without editing it; neither can widen the check, because both are single
-# values and every resource that is not this app in this org counts as a peer.
-APP=${REPRISE_FLY_APP:-reprise-api}
+# The app under scrutiny is read out of fly.toml, never from the environment.
+# `fly deploy` takes its target from that file, so anything else here would let
+# the guard certify an org the deploy will never touch -- and it would do it
+# quietly, in the one direction that matters. An env override was tried and
+# removed for exactly that reason.
+APP=$(sed -n "s/^app = '\([^']*\)'.*/\1/p" "$ROOT/fly.toml" | head -1)
+if [ -z "$APP" ]; then
+  echo "PREFLIGHT REFUSED: no \`app\` line in fly.toml, so there is no deploy" >&2
+  echo "  target to check the organization against." >&2
+  exit 2
+fi
+
+# The org is overridable, because Fly has no per-app way to ask "which org am I
+# in?" without already being scoped. A wrong value here fails CLOSED rather than
+# open: Fly app names are globally unique, so `$APP` will not appear in another
+# org's listing and the checker refuses on the missing app. The success line
+# prints both values so what was actually checked is never in doubt.
 ORG=${REPRISE_FLY_ORG:-personal}
 
 if ! command -v fly >/dev/null 2>&1; then
@@ -47,18 +60,51 @@ if ! command -v fly >/dev/null 2>&1; then
   exit 2
 fi
 
-# Every listing is scoped with --org. `fly apps list` otherwise spans every
-# organization the user belongs to ("The list includes applications from all the
-# organizations the user is a member of"), which would name apps on unrelated
-# private networks as sandbox peers -- a false refusal that teaches an operator
-# to stop running the guard.
-orgs=$(fly orgs list --json 2>/dev/null)
-apps=$(fly apps list --org "$ORG" --json 2>/dev/null)
+# flyctl's own diagnosis is kept, not discarded. An expired session is a routine
+# event, and swallowing stderr made it surface as "was not an object" -- which
+# reads as flyctl format drift, teaches the operator that the guard is stale
+# rather than that they need to log in, and invites them to deploy without it.
+# Three of the checker's refusals really are about format drift, so the two must
+# not be confusable.
+run_fly() {
+  local what=$1
+  shift
+  local out err rc
+  err=$(mktemp)
+  out=$(fly "$@" 2>"$err")
+  rc=$?
+  if [ "$rc" != 0 ]; then
+    echo "PREFLIGHT REFUSED: \`fly $*\` failed (exit $rc), so the $what could" >&2
+    echo "  not be read. This is flyctl talking, not a format change:" >&2
+    sed 's/^/    fly| /' "$err" >&2
+    rm -f "$err"
+    # `return`, not `exit`: every caller is a command substitution, which is a
+    # subshell, so an exit here would kill only that subshell and let the script
+    # run all four listings and then refuse for the wrong reason. The `|| exit`
+    # at each call site is what actually stops it.
+    return 2
+  fi
+  rm -f "$err"
+  printf '%s' "$out"
+}
+
+# `fly orgs list` takes no --org (there is no flag for it): it is the listing
+# that establishes the credential can see "$ORG" at all, which is what catches
+# an app-scoped deploy token whose view of an org is indistinguishable from an
+# empty one. The other three are scoped, because `fly apps list` otherwise spans
+# every organization the user belongs to.
+orgs=$(run_fly "organization list" orgs list --json) || exit 2
+apps=$(run_fly "app listing" apps list --org "$ORG" --json) || exit 2
 # Neither of these speaks JSON on the empty path: `fly redis list` has no --json
 # flag at all, and `fly mpg list -j` prints a sentence. The checker is written to
 # the shapes they actually emit and refuses anything else.
-redis=$(fly redis list --org "$ORG" 2>/dev/null)
-mpg=$(fly mpg list --org "$ORG" -j 2>/dev/null)
+redis=$(run_fly "Upstash Redis listing" redis list --org "$ORG") || exit 2
+# `fly mpg` rejects older-style Fly tokens outright, so a stale credential makes
+# this refuse every time rather than intermittently. That is the right direction
+# -- but a guard that always refuses is a guard that gets skipped, which is the
+# failure this whole slice exists to prevent. If it starts refusing here, the fix
+# is `fly auth login`, not deleting the step.
+mpg=$(run_fly "Managed Postgres listing" mpg list --org "$ORG" -j) || exit 2
 
 # Assembled by node rather than by string interpolation so that CLI output
 # containing a quote or a backslash cannot forge envelope structure.
