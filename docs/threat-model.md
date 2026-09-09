@@ -192,12 +192,27 @@ reaches rather than betting it can't happen:
     escape at all: attack #5, which this document already lists as *not stopped*, is
     sufficient. **Blast radius ≈ every Machine in the Fly organization.**
 
-    Today that org holds one app, so the practical radius is one machine. The danger is
-    forward-looking: this silently weakens OV-10. Credential-poor workers defend against
-    stolen credentials, not against network reachability — the day a Fly Postgres or Redis
-    is provisioned in this org it is reachable from inside the sandbox with no code change
-    and no new finding. Either the app moves to an isolated Fly network, or nothing else
-    gets provisioned in this org while the tier is crude. Tracked in issue #79.
+    Today that org holds one app, so the practical radius is one machine — confirmed
+    against the live org on 2026-09-09, not assumed. The danger is forward-looking: this
+    silently weakens OV-10. Credential-poor workers defend against stolen credentials, not
+    against network reachability — the day a Fly Postgres or Redis is provisioned in this
+    org it is reachable from inside the sandbox with no code change and no new finding.
+
+    **What is actually in place (#79):** the weaker of the two options — a standing
+    constraint that nothing else is provisioned in this org while the tier is crude, in
+    `CLAUDE.md`, in `fly.toml`, and enforced by `pnpm preflight:org`, which reads `fly apps
+    list --json` and exits non-zero if the org has grown a peer. Be clear about what that
+    buys: it defends against *the org growing*, and not at all against 6PN itself. The
+    sandbox can still reach `fdaa::/16`; there is simply nothing there to reach. The
+    preflight is also advisory — it fires only when someone runs it before `fly deploy`,
+    and a `fly postgres create` typed at a terminal is caught on the next deploy, not at
+    the moment of provisioning.
+
+    **What would actually close it:** a dedicated Fly network (`fly apps create --network`),
+    which makes org peers unreachable rather than absent. It requires destroying and
+    recreating `reprise-api`, so it is Melvin's call and is tracked in issue #88 as blocked.
+    Until that lands, this section's honest claim is *blast radius ≈ the Fly organization,
+    currently a population of one, by convention and a preflight rather than by the network*.
   - **Single-host privileged compose (self-host):** workers share the host kernel. An
     escape reaches the host. Blast radius ≈ the host.
 

@@ -606,3 +606,62 @@ lenses. Applied the carve-out's *rationale* instead (the Defense rungs interroga
 explains itself, and prose has no mechanism behind it to bite on) and ran `plan-conformance`
 alone. If that reading is wrong, the fix is to name CLAUDE.md in the carve-out or to exclude it
 explicitly; either way the ambiguity should not survive another session.
+
+---
+
+## 2026-09-09 — The 6PN blast radius: shipped the weaker fix, and said so (#79)
+
+**What the issue left.** #80 had already corrected the false claim in
+`docs/threat-model.md` — the blast radius is the Fly organization, not one microVM, because
+every app in an org shares a private IPv6 network and a jailed process reaches `[fdaa::3]:53`
+→ any `fdaa::/16` peer with no container escape and no kernel bug. Describing the hole is not
+closing it. This slice was the closing half.
+
+**The fork, and why it was not mine to take.** Two options, not equivalent:
+
+- **Dedicated Fly network** (`fly apps create --network`). Makes org peers *unreachable*. The
+  real fix. Networks are fixed at app creation, so it means destroying and recreating
+  `reprise-api` — infrastructure Melvin owns and pays for, which the stop conditions put
+  outside the loop.
+- **Standing constraint.** Keep the org a population of one, so peers are *absent* rather than
+  unreachable. Fully autonomous, and strictly weaker.
+
+Took the second, opened **#88** (`blocked` + `build:melvin`) for the first with the exact four
+commands and the cost stated plainly — destroy, recreate, re-set the secret, redeploy; a
+stateless demo, so no data loss. A blocked issue that makes the decision easy is worth more
+than one that merely records that a decision exists.
+
+**What I built, and the part I want a reader to be suspicious of.** The constraint lives in
+`CLAUDE.md` (prose plus a locked-decisions row), in `fly.toml` where a Fly operator actually
+works, and in `infra/preflight-org.sh`, which reads `fly apps list --json` and exits non-zero
+if the org has grown a peer. Run before every deploy as `pnpm preflight:org`.
+
+The suspicion it deserves: **the preflight is advisory.** It fires when someone runs it. A
+`fly postgres create` typed at a terminal is caught on the *next deploy*, not at the moment of
+provisioning — so there is a window in which the org is populated and the guard is silent. It
+also does nothing about 6PN itself; the sandbox can still reach `fdaa::/16`, there is just
+nothing there. The threat model now says exactly this rather than implying an enforcement it
+does not have. A guard whose limits are undocumented is worse than no guard, because it gets
+trusted.
+
+**The design choice worth defending.** The preflight takes the app list on **stdin** instead of
+shelling out to `fly` itself. That is the CLAUDE.md "I/O at the edges, core pure" rule applied
+to a shell script, and it is what makes the decision testable with no org and no credentials —
+`infra/preflight-org.test.sh` drives seven cases including the ones that matter most, the
+refusals. Unreadable input exits **2, not 0**: `fly apps list --json` is not a stable contract,
+and a guard that reads "I could not tell" as "all clear" is worse than absent, because it is
+believed. The real `fly apps list --json` output was checked against the parser rather than
+assumed, and the live org confirmed as one app on 2026-09-09.
+
+**Defense — Explain / Justify / Tradeoff / Scale & Failure.**
+*Explain:* the org's app list goes in, an exit code comes out; anything that is not exactly
+`reprise-api` alone stops the deploy. *Justify:* the mitigation that is supposed to hold here
+is OV-10, and OV-10 defends against stolen credentials, not reachability — so the second app in
+this org does not weaken it gradually, it ends it, with nothing appearing to break. That is
+precisely the failure a standing constraint has to be loud about. *Tradeoff:* absence instead
+of unreachability, and an advisory check instead of an enforced one, bought without touching
+paid infrastructure; the stronger version is #88 and is one decision away. *Scale & failure:*
+it fails open if nobody runs it and open if Fly renames a JSON field to something still
+array-shaped with a `Name` — but never open on malformed input, which is the failure mode a
+CLI actually has. At any real scale the answer is not a better preflight, it is the dedicated
+network, at which point this script and its constraint are deleted rather than tuned.

@@ -83,3 +83,12 @@ jobs:
 
       - name: production image serves the walking skeleton
         run: bash infra/smoke-image.sh
+
+      # The 6PN deploy preflight (#79), self-tested on fixtures. It rides the
+      # infra job rather than `verify` because it is an infra guard and `pnpm
+      # verify` is exactly three gates and stays that way; it needs no Docker,
+      # and it is far too small to justify a fourth required status check.
+      # What CI proves is the decision logic, not the org — the live check needs
+      # Fly credentials and runs at deploy time via `pnpm preflight:org`.
+      - name: deploy preflight refuses a populated Fly org
+        run: bash infra/preflight-org.test.sh
