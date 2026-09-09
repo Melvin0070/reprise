@@ -562,3 +562,47 @@ permanent — one that outlives the 500ms budget often enough that `unreaped` be
 rather than an alarm, which would argue for widening `MAX_PASSES` first. Or the first real
 report of an instance stuck answering `failed-infra`, which moves worker logging and a
 health probe reflecting reap state from "eventually" to "next".
+
+---
+
+## 2026-09-09 — The `main` ruleset exists; CLAUDE.md said it did not
+
+**What happened.** Checking `gh api repos/Melvin0070/reprise/rulesets` at the start of the
+#78 slice, as CLAUDE.md instructs, returned an active "main protection" ruleset requiring a
+pull request plus `verify`, `isolation` and `image` — not the `[]` the instruction predicted.
+It was created on 2026-09-08 shortly after the entry that recorded it as blocked, and the
+instruction had been stale for a day.
+
+**Why this is worth a commit rather than a shrug.** CLAUDE.md is what the loop reads to
+decide how much rigour a merge needs. An instruction that understates the mechanical
+protection is the safe direction, but it is still a false statement in the file that governs
+every session, and the same staleness in the other direction would be dangerous. The 2026-09-08
+entry already noted a review-gate finding built on this exact stale premise — "the gate reads
+the repo, so the repo being out of date makes the gate out of date."
+
+**The part worth keeping, and the part I got wrong first.** My initial correction said the
+PR-plus-three-checks requirement was now "mechanical rather than a promise". The review gate
+caught that as overstated in the dangerous direction — the exact failure this entry warns
+about, reproduced one paragraph later. The ruleset carries `bypass_actors` for the Admin role
+with `bypass_mode: "always"`, and the loop authenticates as `Melvin0070`, who holds admin:
+`current_user_can_bypass: "always"`. The loop's own merges are exempt. Nothing mechanical
+stops a session merging past a red CI; only CLAUDE.md does.
+
+It also sets `required_approving_review_count: 0`, which is what allows the loop to merge its
+own PRs at all. So green CI proves the three jobs passed and nothing else — it does not prove
+the six-lens gate ran. Both the PR requirement and the gate are as strong as CLAUDE.md and no
+stronger. #78 is the evidence for why that matters: CI was green on the first implementation
+too, and that implementation silently leaked processes and killed concurrent runs. Eight
+blocking findings later, none of them came from CI.
+
+**Left for Melvin rather than done.** Removing the Admin bypass would make the ruleset bind
+the loop, which is the stronger arrangement. It is a governance write on his repository and
+it would also constrain his own direct pushes, so it is his call, not one to make on his
+behalf — see the stop conditions.
+
+**A fork, recorded.** CLAUDE.md's docs-only carve-out names `docs/`, `README.md` and the
+notebook — not CLAUDE.md itself, so strictly a CLAUDE.md-only diff falls to the full always-on
+lenses. Applied the carve-out's *rationale* instead (the Defense rungs interrogate whether code
+explains itself, and prose has no mechanism behind it to bite on) and ran `plan-conformance`
+alone. If that reading is wrong, the fix is to name CLAUDE.md in the carve-out or to exclude it
+explicitly; either way the ambiguity should not survive another session.

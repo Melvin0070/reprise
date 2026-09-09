@@ -139,10 +139,25 @@ pnpm verify   =   pnpm ultracite check && pnpm -r typecheck && pnpm -r test
 CI runs exactly these three. A red CI is a stop-the-line event: fix it before anything else and
 never merge past it. Commit, push and merge freely otherwise.
 
-`main` SHOULD carry a ruleset requiring a pull request and all three CI jobs, so the gate is
-mechanical rather than a promise. As of 2026-09-08 it does NOT — creating it was blocked, and the
-open item is tracked in `docs/notebook.md`. Check `gh api repos/Melvin0070/reprise/rulesets`; while
-it returns `[]`, the review gate is only as strong as this instruction, so do not skip it.
+`main` carries a ruleset requiring a pull request and all three CI jobs. Verified 2026-09-09:
+`gh api repos/Melvin0070/reprise/rulesets` returns "main protection", `enforcement: active`, with
+`pull_request` and `required_status_checks` for `verify`, `isolation` and `image`. Creating it was
+blocked on 2026-09-08 and this file said so; it was created shortly afterwards and the instruction
+went stale for a day.
+
+**It is a backstop against accidents, not a hard block, and the difference matters here.** The
+ruleset carries `bypass_actors: [{actor_type: "RepositoryRole", bypass_mode: "always"}]` for the
+Admin role, and the account this loop authenticates as holds admin — `gh api
+repos/Melvin0070/reprise/rulesets/22509827` reports `current_user_can_bypass: "always"`. So the
+loop's own pushes and merges are exempt from the requirement. Nothing mechanical stops this session
+merging past a red or unfinished CI; only this instruction does.
+
+It also does not run the review gate, and requires no approving review
+(`required_approving_review_count: 0`) — which is what lets the loop merge its own PRs at all. So
+even a green CI proves the three jobs passed and nothing more. Both the PR requirement and the
+six-lens gate above are as strong as this file and no stronger. #78 is the evidence for why that
+matters: CI was green on an implementation that silently leaked processes and killed concurrent
+runs, and the eight blocking findings that killed it came from the gate, not from CI.
 
 CI additionally runs what cannot run per-commit: Playwright E2E, the isolation suite (Linux runner
 only — OV-8), and k6 in the step-3 window. Those are a superset, never a substitute. `pnpm verify`
