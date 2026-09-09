@@ -15,7 +15,22 @@ export interface RawExit {
 export type JailOutcome =
   | { readonly kind: "exited"; readonly exitCode: number }
   | { readonly kind: "timeout" }
-  | { readonly kind: "signalled"; readonly signal: string };
+  | { readonly kind: "signalled"; readonly signal: string }
+  /**
+   * The post-run census could not show the run uid clean (#78).
+   *
+   * Most often that is a run which finished perfectly — exit 0, on time, pipes
+   * drained — and left a process behind that the sweep could not kill. The
+   * settle deadline is one way to arrive here, not the definition of it; so is
+   * a sweep that threw, because a census we cannot take is not an empty one.
+   *
+   * `classifyOutcome` never produces this one: it describes the *reap*, not the
+   * exit, so the jail raises it directly. It exists because the alternative is
+   * worse — a leader that exited 0 while an escapee of its own survives is not
+   * a `succeeded` run, and saying so would invent containment we did not
+   * achieve.
+   */
+  | { readonly kind: "unreaped"; readonly detail: string };
 
 /**
  * Pure classification of a finished child. No I/O, so the whole outcome

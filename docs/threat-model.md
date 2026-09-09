@@ -59,8 +59,26 @@ denying service to everything else on the box.
   bomb hits the cap and its `fork()` calls fail with `EAGAIN` instead of multiplying.
   Because `RLIMIT_NPROC` is enforced **per-uid**, each run must use a low-privilege uid
   that isn't shared with a concurrent run — otherwise one run's bomb starves another's
-  budget. The one-run-per-session lock (T2) keeps concurrency low; a per-run uid is the
-  clean form.
+  budget. Since #78 the reap is per-uid too, which makes a shared uid worse than unfair:
+  one run's reap SIGKILLs everything that uid owns. Three things follow, and all three
+  are enforced rather than requested:
+  - `runInJail` **serialises runs per uid** within a worker process. Without it a
+    timing-out run kills a healthy neighbour's interpreter, and that run is reported
+    `killed-limit` — blamed for a ceiling it never approached. Measured at 25/25 before
+    the sweep was brought inside the queue slot.
+  - `runInJail` **refuses to spawn unless the uid owns nothing** (a census, never a
+    reap — "clean it up first" would perform the host-wide kill itself). This is what
+    stops `REPRISE_RUN_UID=www-data` on a root VPS turning one submission into a SIGKILL
+    of every nginx worker.
+  - Two worker processes must never be given the same run uid. The pre-spawn census
+    narrows that window — the second worker usually sees the first's live run and refuses
+    — but it does not close it: both can census clean in the gap between the census and
+    the spawn that follows, after which one's sweep can still kill the other's run. The
+    instruction stands; the check is a safety net, not a substitute for it.
+
+  A per-run uid **pool** — one dedicated account per concurrent slot — is the clean
+  form and buys back the concurrency the queue costs. Step-3 cgroups make it moot,
+  because `pids.max` and a cgroup-scoped kill are per-run by construction.
 - **Full:** cgroups v2 `pids.max` caps process count per-cgroup rather than per-uid,
   removing the shared-uid caveat entirely.
 
@@ -86,9 +104,36 @@ not just the offender.
 
 - **Crude:** the parent arms a wall-clock timeout and, on expiry, sends `SIGKILL` to the
   runner's **process group** (not just the leader) so any children die with it — this is
-  what ties the timeout back to attack #1. `RLIMIT_CPU` is a secondary backstop that fires
-  on consumed CPU-seconds even if the wall-clock path is somehow evaded. `SIGKILL`, not
-  `SIGTERM`, because hostile code can trap or ignore `SIGTERM`.
+  what ties the timeout back to attack #1. The group kill alone is not enough: a child
+  that calls `setsid(2)` gets a session and process group of its own and the negative-pid
+  kill misses it (#78). So the group kill is followed by a sweep of `/proc` for every live
+  process whose **real uid** is the run uid — the one identity an unprivileged child
+  cannot shed, since it can leave its group with a syscall and leave its parent behind
+  simply by outliving it. That sweep runs **after every run**, not only when something is
+  still holding the output pipes: an escapee that also closes its stdio lets `close` fire
+  on schedule, and a sweep armed off the pipes would never look for it. Measured: a 4ms
+  run reporting exit 0 with the escapee still alive. `RLIMIT_CPU` is a secondary backstop
+  on consumed CPU-seconds, and `buildJailArgv` now rejects a CPU ceiling a single-threaded
+  loop could never reach before the wall clock. `SIGKILL`, not `SIGTERM`, because hostile
+  code can trap or ignore `SIGTERM`. A run the sweep cannot finish settles on a hard
+  deadline rather than hanging on pipes that will never drain, and is reported
+  `failed-infra` — never as the leader's own exit code, which would be true about the
+  leader and false about the run.
+
+  **Known blind spot.** The census deliberately ignores zombies, because signalling one
+  does nothing and counting them would stop the reap converging. A zombie still holds a
+  slot in the per-uid `RLIMIT_NPROC` budget, so something must reap reparented orphans —
+  `/.fly/init` in production, `docker run --init` for the isolation image. Without one,
+  a fork bomb's dead children hold the budget forever while the census reports a clean
+  uid, and every later submission fails to spawn with EAGAIN.
+
+  The production image does **not** supply an init of its own, so this is only handled on
+  targets that provide one. Fly does (`/.fly/init` is PID 1). A self-hosted `docker run`
+  of the production image makes Node PID 1, which does not reap unrelated orphans — such
+  a deployment must pass `--init` (or an equivalent) or it inherits this failure. Note
+  the CI isolation job now passes `--init`, which means CI can no longer surface the
+  problem; that is a deliberate trade to keep the suite honest about the production
+  target, and it is why this paragraph exists.
 - **Full:** cgroups v2 `cpu.max` throttles CPU share so one run can't monopolise a core
   even within its time budget.
 
@@ -164,12 +209,29 @@ reaches rather than betting it can't happen:
 
 The **crude / DEGRADED** tier is what ships first (built in issue #2). As of that slice:
 
-- Attacks 1–3 are contained and covered by the isolation suite (Linux runner only) —
-  **with one verified exception.** The reap for #1 and #3 is `kill(-pgid)`, and a child
-  that calls `setsid(2)` leaves the process group, so the kill misses it and the run's
-  promise never settles. Reproduced 2026-09-08; tracked in issue #78. Until that lands,
-  attacks 1 and 3 are contained against processes that stay in their group and not
-  against ones that do not.
+- Attacks 1–3 are contained and covered by the isolation suite (Linux runner only). The
+  `setsid(2)` escape that made the group kill insufficient was fixed in #78: the reap is
+  now group kill + `/proc` sweep by real uid, and a run that cannot be reaped settles as
+  `failed-infra` instead of hanging. The isolation suite runs the escape as a test.
+- **The reap's precondition is a dedicated run uid**, and it is now checked before every
+  run rather than assumed. See attack #1 for what that enforces and why a census must
+  never be a reap.
+- **An unreapable process takes the instance out of service, on purpose.** The pre-spawn
+  census refuses every later run while a survivor is present, so one process the reap
+  cannot clear turns the instance into a permanent `failed-infra` responder until the
+  machine restarts. That is the correct direction to fail — an instance that serves
+  nothing beats one that SIGKILLs a shared account's processes — but it is currently
+  **silent**: `infraError` is stripped at the API boundary, the worker has no structured
+  logging, and no health probe reflects reap state. The trade is accepted; the missing
+  signal is an open item that closes with worker logging, not by loosening the gate.
+- **Serialising runs is a throughput regression, stated rather than buried.** One run per
+  worker process, with no queue depth cap: with the default 10s wall clock and Fly's
+  `hard_limit = 25`, twenty-five concurrent sleeping submissions hold every connection for
+  ~300s — the slot is `wallClockMs` plus the settle deadline plus up to two reap budgets,
+  ~12s with the defaults, not the 10s wall clock alone. That is accepted at this tier
+  because execution is OV-1 key-gated and `hard_limit` is already the backpressure
+  control — but the one-run-per-session lock (T2)
+  that would bound it above is **not yet shipped**, so today nothing but the API key does.
 - Attack 4 is reduced, not contained; attacks 5–6 are not stopped.
 - Execution is OV-1 key-gated and the tier is labeled unsafe-for-strangers.
 - The step-3 hardening (rows marked "full") lands in place, each layer its own commit, and

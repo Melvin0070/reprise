@@ -6,6 +6,13 @@
  * the uid on the Fly machine, and a wrong one fails at spawn time with an
  * EPERM that explains nothing.
  *
+ * It must be a **dedicated** account that owns nothing else — not merely one
+ * that exists. The jail reaps by uid (#78), so pointing this at a shared
+ * account like `www-data` turns one timing-out submission into a SIGKILL of
+ * every process that account owns. `runInJail` refuses to spawn if the uid is
+ * not clean, so the misconfiguration fails loudly on the first run rather than
+ * taking the host down; this comment is why that check exists.
+ *
  * `env` is a parameter rather than a reach into `process.env` so this stays
  * pure and testable, and so the process boundary is visible at the call site.
  */

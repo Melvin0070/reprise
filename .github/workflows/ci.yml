@@ -62,8 +62,13 @@ jobs:
       - name: build the Linux test image
         run: docker build -q -f infra/dev/linux-test.Dockerfile -t reprise-linux-test .
 
+      # `--init` gives the container a PID 1 that reaps reparented orphans, the
+      # way Fly's `/.fly/init` does in production. Without it a fork bomb's
+      # SIGKILLed children stay zombies, and zombies still hold slots in the
+      # per-uid RLIMIT_NPROC budget the jail depends on — later runs would fail
+      # to spawn while the reap kept reporting a clean uid (#78).
       - name: isolation suite
-        run: docker run --rm reprise-linux-test
+        run: docker run --init --rm reprise-linux-test
 
   # The production image, proven end to end against the artifact that deploys:
   # it boots, enforces the OV-1 gate, and runs the walking skeleton in the jail

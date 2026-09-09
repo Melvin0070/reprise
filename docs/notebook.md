@@ -393,3 +393,172 @@ only exists after S2 — it does not, the reap-by-uid approach uses the dedicate
 already exists — or if S1.5 stretches long enough that the collaborative half's risk
 concentrates at the end again, which is the exact failure OV-4 exists to prevent. Two
 issues is not that.
+
+---
+
+## 2026-09-09 — Reaping by uid: the setsid escape, and what the fix cost (T5, #78)
+
+**The bug, restated from the evidence.** `runInJail` spawned with `detached: true` and
+reaped with `process.kill(-child.pid, "SIGKILL")`. The negative pid targets a process
+group, and a child that calls `setsid(2)` gets a session and a group of its own, so the
+kill missed it. Worse, the code read the resulting `ESRCH` as proof the reap had worked —
+the group was empty *because* the survivor had left it. The orphan kept fd 1 and 2, so the
+pipes never drained, `close` never fired, and the promise the HTTP request sat on never
+settled. Twenty-five of those exhaust `hard_limit` in `fly.toml` and the app stops serving.
+
+**Explain.** Three mechanisms, in the order a run meets them.
+
+`assertUidIsClean` runs before anything is spawned: it enumerates `/proc` for live
+processes whose real uid is the run uid and refuses the run if there are any. Census only,
+never a reap.
+
+`spawnJailed` is unchanged in shape — `prlimit` execs the runner in a new process group as
+the unprivileged uid with an empty environment. What is new is that the group kill is the
+*first* step of a reap rather than the whole of it, and that a hard settle deadline
+(`SETTLE_GRACE_MS`, 1000ms) resolves the promise on the record it has instead of waiting on
+pipes that may never drain.
+
+`reapUid` in `worker/src/sandbox/reap.ts` is what makes containment true. It lists `/proc`,
+reads `status` for each numeric entry at a concurrency of 64, keeps the pids whose **real**
+uid matches, re-confirms ownership immediately before signalling, SIGKILLs, and
+re-censuses — up to 5 passes at 100ms. It returns the pids still alive, which is a fact for
+the caller to report, not an error to throw.
+
+`runOnce` ties them together: pre-spawn census, spawn, then — on every run — an awaited
+final sweep before the queue slot is released. Survivors replace the outcome with a new
+`JailOutcome` member, `unreaped`, which maps to `failed-infra`. All of `runInJail` is
+serialised per uid.
+
+**Justify — the decisions, and what each one beat.**
+
+*Why uid, not pgid.* The uid is the only identity an unprivileged child cannot shed. It
+leaves its process group with one syscall and leaves its parent behind simply by outliving
+it; it cannot change its real uid without privilege. Real rather than effective for the
+same reason, and because `RLIMIT_NPROC` is counted against the real uid — so the census and
+the fork-bomb ceiling talk about the same set.
+
+*Why read `/proc` instead of forking a helper that runs `kill(-1)` as the run uid.* The
+case this exists for is a fork bomb, which by definition has exhausted that uid's
+`RLIMIT_NPROC` budget. Anything that must `fork()` or `setuid()` to do the reaping fails
+with `EAGAIN` exactly when it is needed. A `readdir` needs no new process.
+
+*Why the post-run sweep is unconditional rather than armed off the pipes.* This is the
+finding the first version of the fix missed, and it is the most important line in the
+change. An escapee that calls `setsid(2)` **and** closes fd 0, 1 and 2 holds nothing: the
+pipes drain, `close` fires in single-digit milliseconds, the drain timer is disarmed, and a
+sweep armed off the pipes never runs. Measured before the unconditional sweep existed: a
+**4ms run reporting `{exitCode: 0}` with the escapee still alive in the census.** So the
+sweep hangs off the end of every run, not off a symptom.
+
+*Why the sweep is awaited inside the queue slot.* A fire-and-forget sweep outlives its run.
+Reproduced **25/25**: the sweep from a timing-out run reached into the next run and
+SIGKILLed a healthy program, reported `killed-limit` — blamed for a ceiling it never
+approached. The queue's unit is the run **plus its reap**. The `Reaper`'s `start`/`finish`
+split exists because the two callers have different obligations: the in-run sweep is fired
+from a timer where nobody can await it (its job is to unblock pipes so the promise can
+settle at all), while `finish` is the one the slot waits on, and it resolves only after
+every sweep this run started.
+
+*Why the pre-spawn check is a census and never a reap.* "Clean it up first, then run" would
+perform a host-wide SIGKILL itself on a misconfigured `REPRISE_RUN_UID=www-data`, on the
+first run, before any submitted code executed. For the same reason a census that *cannot be
+taken* — EACCES from a `hidepid=` mount, EMFILE — is a refusal and not a pass. Reading a
+failed census as an empty one is the identical mistake to reading `ESRCH` as proof the kill
+worked, which is the bug this whole change removes.
+
+**Tradeoff — the bill, itemised.**
+
+*Throughput collapses to one run per worker process.* No depth cap, no per-entry timeout.
+The worst-case slot is not `wallClockMs` alone: it is `wallClockMs` + `SETTLE_GRACE_MS` +
+up to two chained reap budgets, ~12s with the defaults. With Fly's `hard_limit = 25`,
+twenty-five sleeping submissions hold every connection for **~300s** and the machine stops
+serving. Accepted rather than bounded because execution is OV-1 key-gated and `hard_limit`
+is already the backpressure control, and because rejecting over a depth cap would invent an
+error contract the API does not have. The form that buys concurrency back is a uid *pool*;
+step-3 cgroups make the question moot, since `pids.max` and a cgroup-scoped kill are
+per-run by construction.
+
+*Every run now pays two `/proc` censuses.* Measured in the isolation image: **p50 0.34ms /
+p95 1.34ms at 6 processes; p50 9.05ms / p95 21.8ms / max 36.3ms at 306.** So ~0.7ms on a
+Fly machine, ~18ms on a busy VPS, against a 10s wall clock — and inside the serialised
+slot, where it delays the next run rather than this one.
+
+*The census ignores zombies, and that is a real blind spot.* Signalling a zombie does
+nothing, and counting them would make the reap kill, re-census, see the same set and never
+converge — the #78 hang one layer down. But a zombie still holds a slot in the per-uid
+`RLIMIT_NPROC` budget, so something must reap reparented orphans: `/.fly/init` in
+production, `docker run --init` for the isolation image (added here). The production image
+supplies no init of its own, so a self-hosted `docker run` must pass `--init` or inherit
+the failure.
+
+*`buildJailArgv` now rejects `maxCpuSeconds * 1000 >= wallClockMs`,* which broke several
+existing tests that paired a short wall clock with the default 5s CPU ceiling. That is the
+check working. Not a universal law — `RLIMIT_CPU` counts CPU aggregated across the thread
+group, so a four-thread program reaches a 10s ceiling in ~2.5s of wall clock — but it only
+ever tightens, so the weaker single-threaded case is the one worth enforcing. Consequence:
+any `wallClockMs` at or below 1000 is now unconfigurable.
+
+**Scale and failure.**
+
+*The headline failure is a genuinely unreapable process, and it is a hard fail-closed.* A
+process wedged in uninterruptible `D` state survives `reapUid`. That run reports
+`failed-infra`, honestly. But the next run's `assertUidIsClean` finds the same survivor and
+refuses, and so does every run after it — the instance permanently answers `failed-infra`
+for every submission, **and does so silently**: `infraError` is stripped at the controller
+boundary because it names our paths, the worker has no structured logging, and no health
+probe reflects reap state. Restarting the machine is the only recovery. An instance serving
+nothing beats one that SIGKILLs a shared account's processes, so the direction is right,
+but the missing signal is an availability cliff and it closes with worker logging.
+
+*Two workers sharing one run uid is unsupported and only partly detected.* The pre-spawn
+census narrows the window; it does not close it, because there is no cross-process lock.
+Both can census clean in the gap before their spawns.
+
+*What does not change.* Attacks #1, #2 and #3 stay contained; #5 (network exfil) and #6
+(container escape) are still not stopped and #4 only reduced. Execution stays behind the
+OV-1 key for exactly that reason.
+
+**The review gate earned its keep on this slice, and that is the honest headline.** My
+first implementation fixed the escapee that *hangs* a request and completely missed the one
+that *silently survives* it — and introduced a cross-run kill of its own. Four independent
+lenses plus five adversarial verifiers produced eight blocking findings across two rounds,
+every one confirmed by reproduction or mutation before it counted:
+
+1. The sweep only ran when an escapee held the pipes (my own repro: 4ms run, exit 0,
+   escapee alive).
+2. The sweep outlived its queue slot and killed the next run (25/25).
+3. Run-uid dedication was unenforced, and the `spec.uid === process.getuid()` guard is
+   structurally unreachable in a deployment — `spawn` with a `uid` option needs CAP_SETUID,
+   so the worker is always root.
+4. The settle path had zero coverage: deleting the entire mechanism left the suite green.
+5. My own "one run per uid" test was a **deterministic false guard** — 10/10 passing with
+   the queue removed entirely, because with a plain sleeping leader the group kill succeeds
+   and Node reaps the child before the first census yields, so `reapUid` never enters its
+   pass loop.
+6. The pure unit suites hardcoded `uid: 1001`, which is `ubuntu-latest`'s own runner uid —
+   reproduced as **5 failing tests** under uid 1001, i.e. a red `verify` job I would only
+   have discovered after pushing.
+7. A leader exiting *after* the settle deadline armed a fresh drain timer that `disarm` had
+   already run past, launching a sweep inside the next run's slot — the same cross-run kill
+   through a different door.
+8. A comment claiming this entry existed before it did.
+
+Every new test is mutation-proven: removing the post-run sweep turns two red; making the
+sweep fire-and-forget reproduces `signalled`/`killed-limit` on the healthy neighbour;
+deleting the settle timer gives `Test timed out in 5000ms`, #78's original symptom exactly;
+removing the late-exit guard gives a third sweep where two were expected.
+
+**Consequences for other work, recorded so they are not rediscovered.**
+`docs/learning-log/001-inline-execution.md` pre-registers a benchmark for head-of-line
+blocking under concurrent submits. That experiment now runs against a jail that serialises
+by construction, so it no longer measures what it was written to measure — the blocking is
+structural in `runInJail`, and the queue upgrade does not buy the concurrency back. Only a
+uid pool or step-3 cgroups do. Whoever runs it must re-register the premise first.
+
+**What would prove this design wrong.** A `/proc` census cost large enough to matter
+against a run's own latency, which would argue for caching the process table between the
+pre-spawn check and the post-run sweep. Or a survivor that is neither transient nor
+permanent — one that outlives the 500ms budget often enough that `unreaped` becomes routine
+rather than an alarm, which would argue for widening `MAX_PASSES` first. Or the first real
+report of an instance stuck answering `failed-infra`, which moves worker logging and a
+health probe reflecting reap state from "eventually" to "next".

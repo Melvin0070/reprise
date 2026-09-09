@@ -34,7 +34,12 @@ export interface SubmissionResult {
   readonly durationMs: number;
   readonly truncated: boolean;
   /**
-   * Why the run never happened, set only alongside `failed-infra`.
+   * Why we cannot stand behind the run, set only alongside `failed-infra`.
+   *
+   * Usually that means the run never happened at all. It also covers the run
+   * that executed and could not be proven contained: an escapee the reap could
+   * not clear leaves the leader's exit code true about the leader and false
+   * about the run (#78).
    *
    * A separate field rather than text appended to `stderr`: that channel is a
    * faithful record of what the user's program wrote, and putting our own
@@ -104,6 +109,12 @@ export const runSubmission = async (
       durationMs: result.durationMs,
       exitCode:
         result.outcome.kind === "exited" ? result.outcome.exitCode : null,
+      // A run the jail could not prove reaped is `failed-infra`, and
+      // `failed-infra` without a reason is the least useful line in a
+      // postmortem — so the jail's own account of it travels with it.
+      ...(result.outcome.kind === "unreaped" && {
+        infraError: result.outcome.detail,
+      }),
       state: outcomeToState(result.outcome),
       stderr: result.stderr,
       stdout: result.stdout,
